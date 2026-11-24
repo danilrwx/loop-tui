@@ -7,7 +7,7 @@
 Build with Go 1.26 or newer.
 
 ```sh
-go build -o loop-tui .
+go build -o loop-tui ./cmd/loop-tui
 ./loop-tui --demo
 ```
 

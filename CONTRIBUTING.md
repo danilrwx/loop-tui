@@ -1,12 +1,17 @@
 # Development and releases
 
-Run the checks and try the offline demo.
+Run the checks with Go 1.27.3 and golangci-lint v2.15.0, then try the offline demo.
 
 ```sh
+make fmt
+make lint
 make check
 make build
 ./loop-tui --demo
 ```
+
+- `cmd/loop-tui` parses flags and reports the version.
+- `internal/loop` handles the server API, the terminal interface, and the offline demo.
 
 Build a local release archive with the packaging script.
 
