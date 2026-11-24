@@ -2,23 +2,23 @@
 
 **Loop and Mattermost in your terminal.** Follow threads, find unread chats, and reply with Vim-style navigation.
 
-## Try it
+## Install
 
-Build with Go 1.26 or newer.
+Available for Linux, macOS, and OpenBSD.
 
 ```sh
-go build -o loop-tui ./cmd/loop-tui
-./loop-tui --demo
+curl -fsSL https://raw.githubusercontent.com/danilrwx/loop-tui/main/scripts/install.sh | sh
+~/.local/bin/loop-tui --demo
 ```
 
-Open **Field Notes** with `Enter`, use `j` and `k` to move, and press `t` on a message with replies. The demo uses fictional chats offline.
+The installer checks the archive’s SHA-256 checksum and installs to `~/.local/bin`. Set `LOOP_INSTALL_DIR` to choose another directory. The demo uses fictional chats offline. [Download a release archive](https://github.com/danilrwx/loop-tui/releases/latest) · [Build from source](CONTRIBUTING.md)
 
 ![Loop TUI showing favorites, unread chats, a Markdown table, and an open thread](docs/demo.png)
 
 ## Connect to your server
 
 ```sh
-./loop-tui --server https://chat.example.org
+~/.local/bin/loop-tui --server https://chat.example.org
 ```
 
 Enter an access token for that server when prompted. You can set `LOOP_SERVER` and pass the token through `LOOP_TOKEN` for noninteractive startup. Your administrator controls whether personal access tokens are available. [Mattermost token documentation](https://docs.mattermost.com/developers/integrate/reference/personal-access-token)
