@@ -1,0 +1,8 @@
+/loop-tui
+/loop-tui.new
+/dist/
+/firefox.py
+/.env
+/.env.*
+/go.work
+/go.work.sum
