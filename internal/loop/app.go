@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/danilrwx/telega/tui"
+	"github.com/danilrwx/telega/updater"
 )
 
 type focus int
@@ -87,10 +87,11 @@ func (c *conversation) replace(posts []post) {
 }
 
 type app struct {
+	updateApp                        updater.App
+	pendingUpdate, updateDialog      *tui.UpdateDialog
 	ctx                              context.Context
 	api                              *client
 	width, height                    int
-	themeChanges                     <-chan bool
 	inlineImages                     *tui.InlineImages
 	inlineLoading                    bool
 	focus                            focus
@@ -175,7 +176,6 @@ func (m *app) username() string {
 
 type (
 	tickMsg        time.Time
-	themeMsg       bool
 	channelsResult struct {
 		items []channel
 		err   error
@@ -202,12 +202,14 @@ type readResult struct {
 
 func newApp(ctx context.Context, api *client) *app {
 	query := textinput.New()
+	query.PlaceholderStyle, query.CompletionStyle = muted, muted
 	query.Prompt = "/ "
 	query.Placeholder = "Filter chats"
 	query.CharLimit = 120
 	draft := textarea.New()
 	draft.Prompt = strings.Repeat(" ", tui.ComposerIndent)
-	draft.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(adaptiveColor(light.DraftBackground, dark.DraftBackground))
+	draft.FocusedStyle = textarea.Style{Placeholder: muted, Prompt: muted}
+	draft.BlurredStyle = draft.FocusedStyle
 	draft.ShowLineNumbers = false
 	draft.Placeholder = "Write a message"
 	draft.CharLimit = messageLimit
@@ -216,6 +218,7 @@ func newApp(ctx context.Context, api *client) *app {
 	draft.SetHeight(1)
 
 	emojiQuery := textinput.New()
+	emojiQuery.PlaceholderStyle, emojiQuery.CompletionStyle = muted, muted
 	emojiQuery.Prompt, emojiQuery.Placeholder, emojiQuery.CharLimit = " / ", "Find emoji", 80
 
 	return &app{
@@ -228,25 +231,8 @@ func nextTick() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func (m *app) waitTheme() tea.Cmd {
-	if m.themeChanges == nil {
-		return nil
-	}
-
-	changes := m.themeChanges
-
-	return func() tea.Msg {
-		dark, ok := <-changes
-		if !ok {
-			return nil
-		}
-
-		return themeMsg(dark)
-	}
-}
-
 func (m *app) Init() tea.Cmd {
-	return tea.Batch(nextTick(), m.loadChannels(), m.waitTheme(), m.waitNotificationEvent())
+	return tea.Batch(nextTick(), m.loadChannels(), m.waitNotificationEvent(), m.checkUpdate())
 }
 
 func (m *app) loadChannels() tea.Cmd {
@@ -321,6 +307,10 @@ func (m *app) loadHistory(thread, older, mark, force bool) tea.Cmd {
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	if m.pendingUpdate != nil && !m.composing && !m.attachmentEditing && len(m.dialogPopup().Lines) == 0 {
+		m.updateDialog, m.pendingUpdate = m.pendingUpdate, nil
+	}
+
 	if next := m.loadVisibleImages(); next != nil {
 		return model, tea.Batch(cmd, next)
 	}
@@ -370,9 +360,13 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case chatSearchOpened:
 		return m, m.receiveChatSearchOpened(msg)
-	case themeMsg:
-		lipgloss.SetHasDarkBackground(bool(msg))
-		return m, m.waitTheme()
+	case updateAvailable:
+		m.pendingUpdate = msg.dialog
+	case updateInstalled:
+		if m.updateDialog == msg.dialog {
+			m.updateDialog.Complete(msg.err)
+		}
+
 	case notificationEvent:
 		return m, tea.Batch(m.waitNotificationEvent(), m.receiveNotification(msg, time.Now()))
 	case remindersChecked:
@@ -1002,6 +996,10 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 	switch key.String() {
 	case "ctrl+c":
 		return tea.Quit
+	}
+
+	if m.updateDialog != nil {
+		return m.updateKey(key)
 	}
 
 	if m.attachmentEditing {

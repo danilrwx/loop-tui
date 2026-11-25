@@ -13,24 +13,17 @@ import (
 	"github.com/rivo/uniseg"
 )
 
+// ANSI indices keep rendered text linked to the terminal's live palette.
 var (
-	light = tui.ThemeColors(false)
-	dark  = tui.ThemeColors(true)
-
-	heading = lipgloss.NewStyle().Bold(true).Foreground(adaptiveColor(light.Heading, dark.Heading))
-	muted   = lipgloss.NewStyle().Foreground(adaptiveColor(light.Muted, dark.Muted))
-	picked  = lipgloss.NewStyle().Foreground(adaptiveColor(light.SelectionText, dark.SelectionText)).
-		Background(adaptiveColor(light.SelectionBackground, dark.SelectionBackground))
-	accent        = lipgloss.NewStyle().Foreground(adaptiveColor(light.Accent, dark.Accent))
-	dateColor     = lipgloss.NewStyle().Foreground(adaptiveColor(light.Date, dark.Date))
-	unreadColor   = lipgloss.NewStyle().Bold(true).Foreground(adaptiveColor(light.Unread, dark.Unread))
+	heading       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	muted         = lipgloss.NewStyle().Faint(true)
+	picked        = lipgloss.NewStyle().Reverse(true)
+	accent        = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	dateColor     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	unreadColor   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	authorColor   = lipgloss.NewStyle().Bold(true)
-	reactionColor = lipgloss.NewStyle().Foreground(adaptiveColor(light.Unread, dark.Unread))
+	reactionColor = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 )
-
-func adaptiveColor(light, dark tui.RGB) lipgloss.AdaptiveColor {
-	return lipgloss.AdaptiveColor{Light: light.Hex(), Dark: dark.Hex()}
-}
 
 type paneLayout struct {
 	sidebar, channel, thread int
@@ -570,7 +563,7 @@ func (m *app) transcriptPost(p post, width, room int, opts transcriptPostOptions
 		name = accent.Bold(true)
 	} else if p.UserID != "" {
 		color := tui.ColorForNick(p.UserID)
-		name = name.Foreground(adaptiveColor(color.Light, color.Dark))
+		name = name.Foreground(lipgloss.Color(fmt.Sprint(color.ANSI - 30)))
 	}
 
 	mark := " "
@@ -743,6 +736,8 @@ func (m *app) dialogPopup() tui.DialogPopup {
 	maxWidth := tui.ListPopupWidth
 
 	switch {
+	case m.updateDialog != nil:
+		render = m.updateDialog.Render
 	case m.deleteTarget.ID != "" && !m.deleting:
 		confirm := tui.DeleteConfirmation(1, true)
 		if m.deleteTarget.RootID == "" {

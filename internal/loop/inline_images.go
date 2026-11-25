@@ -134,7 +134,7 @@ var errUnsupportedInlineImage = errors.New("attachment is not a supported inline
 
 func (m *app) loadVisibleImages() tea.Cmd {
 	if m.inlineImages == nil || m.inlineLoading || m.width < 24 || m.height < 9 || m.active == "" ||
-		m.filtering || m.messageSearch != nil || m.settingsOpen || m.deleteTarget.ID != "" || m.reactionAuthors != nil || m.attachmentPicker != nil || m.textAttachmentPrompt != nil || m.resourceMode != "" || len(m.resources) != 0 {
+		m.updateDialog != nil || m.filtering || m.messageSearch != nil || m.settingsOpen || m.deleteTarget.ID != "" || m.reactionAuthors != nil || m.attachmentPicker != nil || m.textAttachmentPrompt != nil || m.resourceMode != "" || len(m.resources) != 0 {
 		return nil
 	}
 

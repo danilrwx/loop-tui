@@ -11,16 +11,17 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/danilrwx/telega/tui"
+	"github.com/danilrwx/telega/updater"
 	"golang.org/x/term"
 )
 
 // Options configure the client at startup.
 type Options struct {
-	Server string
-	Login  bool
-	Demo   bool
+	Version string
+	Server  string
+	Login   bool
+	Demo    bool
 }
 
 // Run starts Loop TUI and waits for it to exit.
@@ -29,7 +30,7 @@ func Run(opts Options) error {
 	defer stop()
 
 	if opts.Demo {
-		return runClient(ctx, newDemoClient(), true)
+		return runClient(ctx, newDemoClient(), true, opts.Version)
 	}
 
 	rawServer := strings.TrimSpace(opts.Server)
@@ -56,21 +57,17 @@ func Run(opts Options) error {
 		return err
 	}
 
-	return runClient(ctx, newClient(address.String(), token), false)
+	return runClient(ctx, newClient(address.String(), token), false, opts.Version)
 }
 
-func runClient(ctx context.Context, api *client, demo bool) error {
+func runClient(ctx context.Context, api *client, demo bool, version string) error {
 	if err := api.connect(ctx); err != nil {
 		return err
 	}
 
-	dark := tui.DarkTheme()
-	lipgloss.SetHasDarkBackground(dark)
-
 	model := newApp(ctx, api)
-
-	model.themeChanges = tui.WatchDesktopTheme(ctx, dark)
 	if !demo {
+		model.updateApp = updater.App{Name: "loop-tui", Repository: "danilrwx/loop-tui", Version: version}
 		model.discussionCachePath = api.discussionCachePath()
 		model.followed = readDiscussionCache(model.discussionCachePath)
 		model.discussionsComplete = len(model.followed) > 40
