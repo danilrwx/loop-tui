@@ -30,6 +30,7 @@ func main() {
 	server := flag.String("server", "", "Loop or Mattermost server URL (defaults to LOOP_SERVER)")
 	login := flag.Bool("login", false, "open the server in your browser")
 	demo := flag.Bool("demo", false, "try the interface offline with sample chats")
+	notifications := flag.Bool("notify", false, "run background notifications without the interface")
 	showVersion := flag.Bool("version", false, "print the client version")
 
 	update := flag.Bool("update", false, "install the latest client release")
@@ -56,7 +57,7 @@ func main() {
 		return
 	}
 
-	if err := loop.Run(loop.Options{Server: *server, Login: *login, Demo: *demo, Version: appVersion()}); err != nil {
+	if err := loop.Run(loop.Options{Server: *server, Login: *login, Demo: *demo, Version: appVersion(), Notifications: *notifications}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

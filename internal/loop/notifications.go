@@ -36,17 +36,19 @@ type notificationEvent struct {
 	body        string
 	mentioned   bool
 	followed    bool
+	cursor      notificationCursor
 }
 
 type notificationCursor struct {
-	connection string
-	sequence   int
+	Connection string
+	Sequence   int
 }
 
 type reminder struct {
 	notificationEvent
-	due  time.Time
-	read bool
+	due     time.Time
+	read    bool
+	summary int
 }
 
 type reminderCheck struct {
@@ -61,12 +63,11 @@ type (
 	notifyError      struct{ err error }
 )
 
-func (c *client) notificationEvents(ctx context.Context) <-chan notificationEvent {
+func (c *client) notificationEvents(ctx context.Context, cursor notificationCursor) <-chan notificationEvent {
 	events := make(chan notificationEvent, 64)
 	go func() {
 		defer close(events)
 
-		var cursor notificationCursor
 		for ctx.Err() == nil {
 			c.readNotificationEvents(ctx, events, &cursor)
 
@@ -84,8 +85,8 @@ func (c *client) notificationEvents(ctx context.Context) <-chan notificationEven
 func (c *client) readNotificationEvents(ctx context.Context, events chan<- notificationEvent, cursor *notificationCursor) {
 	address := c.baseURL + "/api/v4/websocket"
 
-	if cursor.connection != "" {
-		query := url.Values{"connection_id": {cursor.connection}, "sequence_number": {strconv.Itoa(cursor.sequence)}}
+	if cursor.Connection != "" {
+		query := url.Values{"connection_id": {cursor.Connection}, "sequence_number": {strconv.Itoa(cursor.Sequence)}}
 		address += "?" + query.Encode()
 	}
 
@@ -93,13 +94,17 @@ func (c *client) readNotificationEvents(ctx context.Context, events chan<- notif
 	dialCtx, cancel := context.WithTimeout(ctx, c.http.Timeout)
 
 	//nolint:bodyclose // Dial owns the handshake body, and Conn owns the upgraded stream.
-	conn, _, err := websocket.Dial(dialCtx, address, &websocket.DialOptions{
+	conn, response, err := websocket.Dial(dialCtx, address, &websocket.DialOptions{
 		HTTPClient: c.http, HTTPHeader: header,
 	})
 
 	cancel()
 
 	if err != nil {
+		if response != nil && (response.StatusCode == 400 || response.StatusCode == 404 || response.StatusCode == 410) {
+			*cursor = notificationCursor{}
+		}
+
 		return
 	}
 
@@ -132,11 +137,19 @@ func (c *client) readNotificationEvents(ctx context.Context, events chan<- notif
 		}
 	}()
 
+	received := false
+
 	for {
 		_, payload, err := conn.Read(ctx)
 		if err != nil {
+			if !received {
+				*cursor = notificationCursor{}
+			}
+
 			return
 		}
+
+		received = true
 
 		var wire notificationWire
 		if json.Unmarshal(payload, &wire) != nil || wire.Event == "" {
@@ -149,13 +162,21 @@ func (c *client) readNotificationEvents(ctx context.Context, events chan<- notif
 			}
 
 			_ = json.Unmarshal(wire.Data, &hello)
-			cursor.connection = hello.Connection
-		} else if cursor.connection != "" && wire.Sequence != cursor.sequence {
+			cursor.Connection = hello.Connection
+		} else if cursor.Connection != "" && wire.Sequence != cursor.Sequence {
+			*cursor = notificationCursor{}
 			return
 		}
 
-		cursor.sequence = wire.Sequence + 1
-		if event, ok := wire.notification(c.me.ID); ok {
+		cursor.Sequence = wire.Sequence + 1
+
+		event, ok := wire.notification(c.me.ID)
+		if wire.Event == "hello" {
+			event, ok = notificationEvent{kind: "connected"}, true
+		}
+
+		if ok {
+			event.cursor = *cursor
 			select {
 			case events <- event:
 			case <-ctx.Done():
@@ -257,6 +278,11 @@ func (m *app) waitNotificationEvent() tea.Cmd {
 }
 
 func (m *app) receiveNotification(event notificationEvent, now time.Time) tea.Cmd {
+	m.notificationsDirty = true
+	if event.kind == "connected" || event.cursor.Connection != "" {
+		m.notificationCursor = event.cursor
+	}
+
 	switch event.kind {
 	case "post_deleted":
 		delete(m.reminders, event.post.ID)
@@ -327,7 +353,7 @@ func (m *app) desktopNotice(event notificationEvent, repeat bool) tea.Cmd {
 }
 
 func (m *app) modeFor(item reminder) reminderMode {
-	if m.watchesChannel(item.post.ChannelID) || item.followed && !item.mentioned {
+	if item.summary != 0 || m.watchesChannel(item.post.ChannelID) || item.followed && !item.mentioned {
 		return untilRead
 	}
 
@@ -335,6 +361,7 @@ func (m *app) modeFor(item reminder) reminderMode {
 }
 
 func (m *app) acknowledgeReaction(react reaction) {
+	m.notificationsDirty = true
 	if item, ok := m.reminders[react.PostID]; ok && react.UserID == m.api.me.ID {
 		mode := m.modeFor(item)
 		if mode == untilReaction || mode == untilEyes && react.EmojiName == "eyes" {
@@ -344,6 +371,7 @@ func (m *app) acknowledgeReaction(react reaction) {
 }
 
 func (m *app) acknowledgeRead(channelID, rootID string, through int64) {
+	m.notificationsDirty = true
 	for id, item := range m.reminders {
 		if item.post.ChannelID == channelID && item.post.RootID == rootID && item.post.CreatedAt <= through {
 			if m.modeFor(item) == untilRead {
@@ -394,6 +422,11 @@ func (m *app) checkReminders(now time.Time) tea.Cmd {
 
 		for i, item := range due {
 			check := &checks[i]
+
+			if item.summary != 0 {
+				continue
+			}
+
 			if check.mode != untilRead {
 				check.done, check.err = m.api.reminderReacted(ctx, item.post.ID, check.mode)
 				continue
@@ -434,6 +467,13 @@ func (c *client) reminderViewed(ctx context.Context, item reminder) (int64, erro
 
 	err := c.request(ctx, http.MethodGet, path, nil, &state)
 	if errors.Is(err, errNotFound) && p.RootID != "" {
+		var existing post
+		if postErr := c.request(ctx, http.MethodGet, "/posts/"+url.PathEscape(p.ID), nil, &existing); errors.Is(postErr, errNotFound) {
+			return p.CreatedAt, nil
+		} else if postErr != nil {
+			return 0, postErr
+		}
+
 		return 0, nil // An unfollowed thread can have no server read state.
 	}
 
@@ -456,6 +496,7 @@ func (c *client) reminderReacted(ctx context.Context, id string, mode reminderMo
 }
 
 func (m *app) receiveReminderChecks(checks remindersChecked, now time.Time) tea.Cmd {
+	m.notificationsDirty = true
 	m.remindersChecking = false
 
 	var notifications []tea.Cmd
@@ -493,6 +534,7 @@ func (m *app) watchesChannel(id string) bool {
 }
 
 func (m *app) toggleChannelNotifications(id string) {
+	m.notificationsDirty = true
 	if id == "" || m.api == nil {
 		return
 	}

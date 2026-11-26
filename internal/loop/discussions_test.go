@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -241,5 +242,80 @@ func TestDiscussionCacheShowsEarlyPageAndSurvivesRefreshError(t *testing.T) {
 
 	if len(warm.timeline.posts) != 41 || warm.timeline.loading {
 		t.Fatal("a failed refresh should preserve the cache")
+	}
+}
+
+func TestUnreadDiscussionBadgeAndAutomaticRefresh(t *testing.T) {
+	m := newApp(t.Context(), newClient("https://example.org", "fixture"))
+	m.width, m.height = 100, 24
+	m.channels = []channel{{ID: "chat", Threads: []threadSignal{{root: "old", unread: 3}, {root: "other", unread: 1}}}}
+
+	rows := m.sidebarItems()
+	if rows[0].ID != discussionsID || rows[0].Unread != 2 || !strings.Contains(m.sidebar(40, 20), "Discussions") {
+		t.Fatal("discussions must count unread threads even before opening the feed")
+	}
+
+	m.active, m.focus = discussionsID, channelPane
+	m.Update(tickMsg(time.Unix(15, 0)))
+
+	if !m.discussionsLoading {
+		t.Fatal("the open discussions feed did not refresh automatically")
+	}
+
+	m.receiveDiscussions(discussionsResult{items: []followedThread{{Post: post{ID: "old", ChannelID: "chat"}, Unread: 3}}})
+	m.feedFilter = 1
+	m.applyDiscussionFilter()
+
+	if len(m.timeline.posts) != 1 {
+		t.Fatal("new replies missing from unread discussions")
+	}
+
+	m.clearThread("old")
+
+	if m.sidebarItems()[0].Unread != 1 {
+		t.Fatal("reading a thread did not reduce the discussion badge")
+	}
+
+	m.clearThread("other")
+	m.syncDiscussionUnread()
+
+	if len(m.timeline.posts) != 0 {
+		t.Fatal("a server read snapshot left a cached discussion in the unread filter")
+	}
+
+	if m.sidebarItems()[0].hasUnread() {
+		t.Fatal("read discussions retained the badge")
+	}
+}
+
+func TestUnreadThreadShortcutFromEveryPane(t *testing.T) {
+	for _, focus := range []focus{channelsPane, channelPane, threadPane} {
+		t.Run(fmt.Sprint(focus), func(t *testing.T) {
+			m := newApp(t.Context(), newClient("https://example.org", "fixture"))
+			m.channels = []channel{{ID: "chat", TeamID: "team", Threads: []threadSignal{{root: "old-root", unread: 2, lastViewed: 10}}}}
+			m.active, m.channelCursor, m.focus = "chat", "chat", focus
+
+			m.timeline.posts = []post{{ID: "recent", ChannelID: "chat"}}
+			if focus == threadPane {
+				m.root, m.threadChannelID = "read-root", "chat"
+			}
+
+			cmd := m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+			if cmd == nil || m.root != "old-root" || m.threadChannelID != "chat" || m.focus != threadPane || m.discussion.readThrough != 10 {
+				t.Fatal("n must open the unread thread even when its root is outside the loaded channel history")
+			}
+		})
+	}
+}
+
+func TestUnreadShortcutFromDiscussions(t *testing.T) {
+	for _, pane := range []focus{channelsPane, channelPane} {
+		m := newApp(t.Context(), newClient("https://example.org", "fixture"))
+		m.channels = []channel{{ID: "chat", Threads: []threadSignal{{root: "root", unread: 1}}}}
+
+		m.active, m.channelCursor, m.focus = discussionsID, discussionsID, pane
+		if m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}) == nil || m.root != "root" || m.threadChannelID != "chat" {
+			t.Fatal("n on Discussions must open an unread thread in its source channel")
+		}
 	}
 }

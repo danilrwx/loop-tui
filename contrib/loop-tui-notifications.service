@@ -1,0 +1,14 @@
+[Unit]
+Description=Loop TUI background notifications
+After=dbus.socket
+
+[Service]
+ExecStart=%h/.local/bin/loop-tui --notify
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

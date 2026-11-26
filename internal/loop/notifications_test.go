@@ -82,12 +82,22 @@ func TestNotificationSocketDecodesServerMentionsAndResumes(t *testing.T) {
 	for _, id := range []string{"first", "second"} {
 		c.readNotificationEvents(ctx, events, &cursor)
 
-		select {
-		case event := <-events:
+		received := false
+
+		for len(events) > 0 {
+			event := <-events
+			if event.kind == "connected" {
+				continue
+			}
+
 			if event.post.ID != id || !event.mentioned || event.title != "Duty" {
 				t.Fatalf("unexpected notification: %+v", event)
 			}
-		default:
+
+			received = true
+		}
+
+		if !received {
 			t.Fatalf("expected event %s", id)
 		}
 	}

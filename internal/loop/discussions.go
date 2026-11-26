@@ -324,3 +324,60 @@ func (m *app) removeFollowedThread(root string) {
 		m.applyDiscussionFilter()
 	}
 }
+
+// Jump directly by root ID: an old thread need not be loaded in the channel page.
+func (m *app) openUnreadThread() tea.Cmd {
+	ch := m.conversationChannel(m.focus == threadPane)
+	if m.focus == channelsPane {
+		ch = m.channelByID(m.channelCursor)
+	}
+
+	if ch.ID == discussionsID || m.active == discussionsID && m.focus != channelsPane {
+		for _, candidate := range m.channels {
+			if len(candidate.Threads) > 0 {
+				ch = candidate
+				break
+			}
+		}
+	}
+
+	if len(ch.Threads) == 0 {
+		m.status = "No unread threads in this chat"
+		return nil
+	}
+
+	root := ch.Threads[0].root
+
+	var load tea.Cmd
+	if m.focus == channelsPane {
+		load = m.openChannel()
+	}
+
+	p := post{ID: root, ChannelID: ch.ID}
+	if index := slices.IndexFunc(m.timeline.posts, func(p post) bool { return p.ID == root }); index >= 0 && m.active == ch.ID {
+		m.timeline.selectIndex(index)
+		p = m.timeline.posts[index]
+	}
+
+	return tea.Batch(load, m.openThread(p, false))
+}
+
+// Channel snapshots contain all unread followed threads, including older cached roots.
+func (m *app) syncDiscussionUnread() {
+	signals := make(map[string]threadSignal)
+
+	for _, ch := range m.channels {
+		for _, signal := range ch.Threads {
+			signals[signal.root] = signal
+		}
+	}
+
+	for i := range m.followed {
+		signal := signals[m.followed[i].Post.ID]
+		m.followed[i].Unread, m.followed[i].Mentions = signal.unread, signal.mentions
+	}
+
+	if m.active == discussionsID {
+		m.applyDiscussionFilter()
+	}
+}

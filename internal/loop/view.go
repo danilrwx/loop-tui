@@ -271,13 +271,13 @@ func (m *app) hints() string {
 	case m.filtering:
 		return "↑↓ choose  Enter open  Esc clear"
 	case m.focus == channelsPane:
-		return "jk move  d DMs  c channels  N alerts  / chats  Ctrl+F messages  S settings"
+		return "n unread thread  jk move  d DMs  c channels  N alerts  / chats  Ctrl+F messages  S settings"
 	case m.focus == threadPane:
-		return "jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  x details  JK posts  h back  m read  D delete  i reply  a attach  V files  o open  O links/files"
+		return "n next unread thread  jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  x details  JK posts  h back  m read  D delete  i reply  a attach  V files  o open  O links/files"
 	case isFeed(m.active):
-		return "jk scroll  Ctrl+U/D page  Enter open  f filter  w/W follow  R refresh  h chats"
+		return "n unread thread  jk scroll  Ctrl+U/D page  Enter open  f filter  w/W follow  R refresh  h chats"
 	default:
-		keys := "jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  JK posts  t thread  m read  D delete  n unread  i write  a attach  V files  o open  O links/files"
+		keys := "n unread thread  jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  JK posts  t thread  m read  D delete  i write  a attach  V files  o open  O links/files"
 		if m.preferences.HideChatListWhenOpen {
 			keys = "h chats  " + keys
 		}
@@ -292,7 +292,15 @@ func (m *app) sidebarItems() []channel {
 
 	searching := strings.TrimSpace(m.query.Value()) != ""
 	if !searching {
-		items = append(items, feedChannels[:]...)
+		for _, feed := range feedChannels {
+			if feed.ID == discussionsID {
+				for _, ch := range m.channels {
+					feed.Unread += len(ch.Threads)
+				}
+			}
+
+			items = append(items, feed)
+		}
 	}
 
 	if len(favorites) > 0 {

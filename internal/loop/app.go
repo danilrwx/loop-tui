@@ -2,7 +2,9 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -87,6 +89,13 @@ func (c *conversation) replace(posts []post) {
 }
 
 type app struct {
+	background                       bool
+	notificationStateName            string
+	notificationCursor               notificationCursor
+	notificationsDirty               bool
+	notificationFailure              error
+	notificationExecutable           string
+	notificationBinary               os.FileInfo
 	updateApp                        updater.App
 	pendingUpdate, updateDialog      *tui.UpdateDialog
 	ctx                              context.Context
@@ -307,6 +316,17 @@ func (m *app) loadHistory(thread, older, mark, force bool) tea.Cmd {
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	if m.notificationsDirty && m.notificationStateName != "" {
+		if err := m.saveNotifications(); err != nil {
+			m.notificationFailure = err
+
+			m.status = err.Error()
+			if m.background {
+				return m, tea.Quit
+			}
+		}
+	}
+
 	if m.pendingUpdate != nil && !m.composing && !m.attachmentEditing && len(m.dialogPopup().Lines) == 0 {
 		m.updateDialog, m.pendingUpdate = m.pendingUpdate, nil
 	}
@@ -368,32 +388,67 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case notificationEvent:
-		return m, tea.Batch(m.waitNotificationEvent(), m.receiveNotification(msg, time.Now()))
+		command := m.receiveNotification(msg, time.Now())
+		if msg.kind == "connected" {
+			return m, tea.Batch(m.waitNotificationEvent(), m.loadChannels())
+		}
+
+		return m, tea.Batch(m.waitNotificationEvent(), command)
 	case remindersChecked:
 		return m, m.receiveReminderChecks(msg, time.Now())
 	case notifyError:
+		if m.background {
+			m.notificationFailure = msg.err
+			return m, tea.Quit
+		}
+
 		m.status = "Desktop notification: " + msg.err.Error()
 	case tickMsg:
+		if m.background {
+			if m.notifierBinaryChanged() {
+				return m, tea.Quit
+			}
+
+			m.loadPreferences()
+
+			for id, item := range m.reminders {
+				if !item.mentioned && !item.followed && !m.watchesChannel(item.post.ChannelID) {
+					delete(m.reminders, id)
+					m.notificationsDirty = true
+				}
+			}
+		}
+
 		reminders := m.checkReminders(time.Time(msg))
 
-		var sidebar tea.Cmd
-		if m.sequence == 0 || time.Time(msg).Unix()/5%3 == 0 {
+		var sidebar, discussions tea.Cmd
+		if !m.background && m.sequence == 0 || time.Time(msg).Unix()/5%3 == 0 {
 			sidebar = m.loadChannels()
+			if !m.background && m.active == discussionsID && !m.discussionsLoading {
+				discussions = m.loadDiscussions(true)
+			}
 		}
 
 		if m.deleteTarget.ID != "" || m.reactionTarget.ID != "" {
-			return m, tea.Batch(nextTick(), reminders, sidebar)
+			return m, tea.Batch(nextTick(), reminders, sidebar, discussions)
 		}
 		// Polling never acknowledges reads, even when the open panes are hidden.
-		return m, tea.Batch(nextTick(), reminders, sidebar, m.loadHistory(false, false, false, false), m.loadHistory(true, false, false, false))
+		return m, tea.Batch(nextTick(), reminders, sidebar, discussions, m.loadHistory(false, false, false, false), m.loadHistory(true, false, false, false))
 	case channelsResult:
 		m.channelsLoading = false
 		if msg.err != nil {
 			m.status = "Chats: " + msg.err.Error()
+			if m.background && errors.Is(msg.err, errUnauthorized) {
+				m.notificationFailure = msg.err
+				return m, tea.Quit
+			}
+
 			break
 		}
 
 		m.channels = msg.items
+		m.syncDiscussionUnread()
+
 		if m.chatStatus != nil {
 			m.chatStatus.Publish(chatStatusCounts(m.channels))
 		}
@@ -403,6 +458,8 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.HasPrefix(m.status, "Chats: ") {
 			m.status = ""
 		}
+
+		return m, m.recoverNotifications(time.Now())
 	case historyResult:
 		if msg.marked && len(msg.page.posts) > 0 {
 			m.acknowledgeRead(msg.channelID, msg.rootID, msg.page.posts[0].CreatedAt)
@@ -1166,6 +1223,8 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 			m.moveChannel(-1)
 		case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 			m.moveChannel(pageDistance(name, max(1, m.height-5)))
+		case "n":
+			return m.openUnreadThread()
 		case "enter", "l", "right":
 			return m.openChannel()
 		case "c":
@@ -1200,7 +1259,13 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 			}
 
 			return m.openThread(p, name == "r")
-		case "i", "a", "alt+t", "ctrl+o", "ctrl+v", "ctrl+x", "m", "n":
+		case "n":
+			if m.active == discussionsID {
+				return m.openUnreadThread()
+			}
+
+			return nil
+		case "i", "a", "alt+t", "ctrl+o", "ctrl+v", "ctrl+x", "m":
 			return nil
 		}
 	}
@@ -1274,22 +1339,7 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 	case "ctrl+o":
 		m.showDraftAttachments()
 	case "n":
-		if m.focus == channelPane {
-			threads := m.activeChannel().Threads
-			if len(threads) > 0 {
-				root := threads[0].root
-
-				p := post{ID: root}
-				if index := slices.IndexFunc(view.posts, func(p post) bool { return p.ID == root }); index >= 0 {
-					view.selectIndex(index)
-					p = view.posts[index]
-				}
-
-				return m.openThread(p, false)
-			}
-
-			m.status = "No unread threads in this chat"
-		}
+		return m.openUnreadThread()
 	case "t", "enter", "l", "right":
 		if m.focus == channelPane {
 			return m.openThread(view.selectedPost(), false)

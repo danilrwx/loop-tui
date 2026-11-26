@@ -43,4 +43,9 @@ go mod vendor -o "$work/vendor"
             cat "$file"
         done
 ) > "$work/THIRD_PARTY_LICENSES"
-tar -czf "$output/loop-tui_${GOOS}_${target#*/}.tar.gz" -C "$work" loop-tui README.md LICENSE THIRD_PARTY_LICENSES docs
+set -- loop-tui README.md LICENSE THIRD_PARTY_LICENSES docs
+if [ "$GOOS" = linux ]; then
+    cp contrib/loop-tui-notifications.service "$work/"
+    set -- "$@" loop-tui-notifications.service
+fi
+tar -czf "$output/loop-tui_${GOOS}_${target#*/}.tar.gz" -C "$work" "$@"
