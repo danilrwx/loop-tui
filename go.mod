@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/websocket v1.8.15
-	github.com/danilrwx/telega v0.3.3-0.20261126131221-009c27709884
+	github.com/danilrwx/telega v0.3.3
 	github.com/kyokomi/emoji/v2 v2.2.14
 	github.com/muesli/termenv v0.16.0
 	github.com/rivo/uniseg v0.4.7
