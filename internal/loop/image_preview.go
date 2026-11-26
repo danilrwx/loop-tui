@@ -97,17 +97,20 @@ func (m *app) previewEmoji() tea.Cmd {
 		return nil
 	}
 
-	if !tui.ImageGraphics() {
-		m.status = "Image preview needs Kitty or Sixel graphics"
-		return nil
-	}
-
 	m.status = "Loading emoji image…"
 	m.emojiPreviewLoading = true
 	postID := m.reactionTarget.ID
 
 	return func() tea.Msg {
 		result := imagePreviewResult{title: ":" + name + ":", reactionPost: postID}
+
+		tui.RefreshTerminalGraphics()
+
+		if !tui.ImageGraphics() {
+			result.err = errors.New("image preview needs Kitty or Sixel graphics")
+			return result
+		}
+
 		result.image, result.err = cachedLoopEmoji(m.ctx, m.api, name, tui.DecodeTerminalImage)
 
 		return result

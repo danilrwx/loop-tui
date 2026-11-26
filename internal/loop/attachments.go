@@ -131,7 +131,7 @@ func (m *app) resourceKey(key tea.KeyMsg) tea.Cmd {
 			m.resourceOpening = true
 			m.status = "Opening…"
 
-			return m.openResource(item, false)
+			return m.openResource(item)
 		}
 	}
 

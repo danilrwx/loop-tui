@@ -214,16 +214,14 @@ func (m *app) openPostResource(p post) tea.Cmd {
 		return nil
 	}
 
-	if tui.ImageGraphics() {
-		id := inlineAttachmentID(p)
-		if id != "" && (len(p.Metadata.Files) != 0 || m.inlineImages.Get("file:"+id) != nil) {
-			for _, item := range postAttachments(p) {
-				if item.fileID == id {
-					m.resourceOpening = true
-					m.status = "Opening image…"
+	id := inlineAttachmentID(p)
+	if id != "" {
+		for _, item := range postAttachments(p) {
+			if item.fileID == id {
+				m.resourceOpening = true
+				m.status = "Opening image…"
 
-					return m.openResource(item, true)
-				}
+				return m.openResource(item)
 			}
 		}
 	}
@@ -233,7 +231,7 @@ func (m *app) openPostResource(p post) tea.Cmd {
 	return nil
 }
 
-func (m *app) openResource(item resource, previewOnly bool) tea.Cmd {
+func (m *app) openResource(item resource) tea.Cmd {
 	return func() tea.Msg {
 		target := item.link
 		if item.localPath != "" {
@@ -253,14 +251,14 @@ func (m *app) openResource(item resource, previewOnly bool) tea.Cmd {
 			}
 		}
 
+		if item.fileID != "" || item.localPath != "" {
+			tui.RefreshTerminalGraphics()
+		}
+
 		if (item.fileID != "" || item.localPath != "") && tui.ImageGraphics() {
 			img, err := tui.LoadTerminalImage(target)
 			if err == nil {
 				return imagePreviewResult{image: img, title: item.label, path: target}
-			}
-
-			if previewOnly || tui.InlineImageFile(target, "") {
-				return resourceResult{err}
 			}
 		}
 
