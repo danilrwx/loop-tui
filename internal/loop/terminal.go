@@ -89,7 +89,7 @@ func runClient(ctx context.Context, api *client, demo bool, version string) erro
 	model.inlineImages = tui.NewImageOutput(os.Stdout)
 	defer model.inlineImages.Clear()
 
-	options = append(options, tea.WithOutput(model.inlineImages))
+	options = append(options, tea.WithOutput(&terminalOutput{InlineImages: model.inlineImages}))
 
 	_, err := tea.NewProgram(model, options...).Run()
 

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -208,9 +209,18 @@ func runInlineVisualHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	posts := []post{
-		{ID: "one", UserID: "author", Author: "Visual first", Text: "First avatar should be red.", ChannelID: "chat", CreatedAt: time.Now().UnixMilli()},
-		{ID: "two", UserID: "author-two", Author: "Visual second", Text: "Second avatar should be red.", ChannelID: "chat", CreatedAt: time.Now().Add(-time.Minute).UnixMilli()},
+	posts := make([]post, 30)
+	list := postList{Posts: make(map[string]post)}
+
+	for i := range posts {
+		id := strconv.Itoa(i)
+		posts[i] = post{
+			ID: id, UserID: "author-" + id, Author: "Visual " + id,
+			Text:      "Avatar should stay red while scrolling. " + id,
+			ChannelID: "chat", CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute).UnixMilli(),
+		}
+		list.Order = append(list.Order, id)
+		list.Posts[id] = posts[i]
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +228,7 @@ func runInlineVisualHelper(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/image"):
 			_, _ = w.Write(data.Bytes())
 		case r.URL.Path == "/api/v4/channels/chat/posts":
-			_ = json.NewEncoder(w).Encode(postList{Order: []string{"one", "two"}, Posts: map[string]post{"one": posts[0], "two": posts[1]}})
+			_ = json.NewEncoder(w).Encode(list)
 		case r.URL.Path == "/api/v4/users/me/channels":
 			_, _ = io.WriteString(w, `[{"id":"chat","display_name":"Avatar visual check"}]`)
 		default:
@@ -239,7 +249,7 @@ func runInlineVisualHelper(t *testing.T) {
 	defer m.inlineImages.Clear()
 
 	model := &inlineVisualModel{app: m, enable: os.Getenv("LOOP_INLINE_ENABLE_FILE")}
-	if _, err := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(m.inlineImages), tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(&terminalOutput{InlineImages: m.inlineImages}), tea.WithAltScreen()).Run(); err != nil {
 		t.Fatal(err)
 	}
 }
