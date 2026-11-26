@@ -4,15 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/danilrwx/loop-tui/internal/session"
 	"github.com/danilrwx/telega/tui"
 	"github.com/danilrwx/telega/updater"
 	"golang.org/x/term"
@@ -20,11 +18,10 @@ import (
 
 // Options configure the client at startup.
 type Options struct {
-	Notifications bool
-	Version       string
-	Server        string
-	Login         bool
-	Demo          bool
+	Version string
+	Server  string
+	Login   bool
+	Demo    bool
 }
 
 // Run starts Loop TUI and waits for it to exit.
@@ -33,107 +30,58 @@ func Run(opts Options) error {
 	defer stop()
 
 	if opts.Demo {
-		if opts.Notifications {
-			return errors.New("background notifications are not available in the offline demo")
-		}
-
-		return runClient(ctx, newDemoClient(), true, opts.Version, false)
+		return runClient(ctx, newDemoClient(), true, opts.Version)
 	}
 
-	rawServer := strings.TrimSpace(opts.Server)
-	if rawServer == "" {
-		rawServer = strings.TrimSpace(os.Getenv("LOOP_SERVER"))
-	}
-
-	if rawServer == "" {
-		return errors.New("set LOOP_SERVER or pass --server with your server URL")
-	}
-
-	address, err := url.Parse(strings.TrimRight(rawServer, "/"))
-	if err != nil || address.Scheme != "https" || address.Hostname() == "" || address.User != nil ||
-		address.RawQuery != "" || address.Fragment != "" || address.ForceQuery {
-		return errors.New("use an HTTPS server URL without credentials, query or fragment")
-	}
-
-	if opts.Login {
-		return launchResource(address.String())
-	}
-
-	token, err := readToken(address.Host)
+	server, err := session.Server(opts.Server)
 	if err != nil {
 		return err
 	}
 
-	return runClient(ctx, newClient(address.String(), token), false, opts.Version, opts.Notifications)
+	if opts.Login {
+		return launchResource(server)
+	}
+
+	token, err := session.Token(ctx, server, opts.Server != "")
+	if err != nil {
+		return err
+	}
+
+	if token == "" {
+		token, err = readToken(server)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return runClient(ctx, newClient(server, token), false, opts.Version)
 }
 
-func runClient(ctx context.Context, api *client, demo bool, version string, background bool) error {
+func runClient(ctx context.Context, api *client, demo bool, version string) error {
 	if err := api.connect(ctx); err != nil {
 		return err
 	}
 
 	model := newApp(ctx, api)
 
-	model.background = background
 	if !demo {
-		if !background {
-			model.updateApp = updater.App{Name: "loop-tui", Repository: "danilrwx/loop-tui", Version: version}
-		}
+		model.updateApp = updater.App{Name: "loop-tui", Repository: "danilrwx/loop-tui", Version: version}
+		model.discussionCachePath = api.discussionCachePath()
+		model.followed = readDiscussionCache(model.discussionCachePath)
+		model.discussionsComplete = len(model.followed) > 40
 
-		if !background {
-			model.discussionCachePath = api.discussionCachePath()
-			model.followed = readDiscussionCache(model.discussionCachePath)
-			model.discussionsComplete = len(model.followed) > 40
-
-			model.chatStatus = tui.OpenChatStatus()
-			defer model.chatStatus.Clear()
-		}
+		model.chatStatus = tui.OpenChatStatus()
+		defer model.chatStatus.Clear()
 
 		model.loadPreferences()
 
-		if notifier, err := exec.LookPath("notify-send"); err == nil {
-			model.notifier = notifier
+		var err error
 
-			lease, err := model.startNotifications()
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-
-				return err
-			}
-
-			if lease != nil {
-				defer func() { _ = lease.Close() }()
-			}
-		} else if background {
-			return errors.New("background notifications require notify-send")
+		model.draftStore, err = tui.OpenDraftStore("loop-tui")
+		if err != nil {
+			model.status = "Drafts: " + err.Error()
 		}
-
-		if !background {
-			var err error
-
-			model.draftStore, err = tui.OpenDraftStore("loop-tui")
-			if err != nil {
-				model.status = "Drafts: " + err.Error()
-			}
-		}
-	}
-
-	if background {
-		model.notificationExecutable, _ = os.Executable()
-		model.notificationBinary, _ = os.Stat(model.notificationExecutable)
-
-		_, err := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler(), tea.WithContext(ctx)).Run()
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		if model.notificationFailure != nil {
-			return model.notificationFailure
-		}
-
-		return err
 	}
 
 	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}

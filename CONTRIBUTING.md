@@ -7,10 +7,13 @@ make fmt
 make lint
 make check
 make build
-./loop-tui --demo
+python3 scripts/install_test.py
+./loop --demo
 ```
 
-- `cmd/loop-tui` parses flags and reports the version.
+- `cmd/loop` parses flags and reports the version.
+- `cmd/loopd` runs the notification daemon without terminal dependencies.
+- `internal/notify` handles notification delivery and recovery.
 - `internal/loop` handles the server API, the terminal interface, and the offline demo.
 
 Build a local release archive with the packaging script.

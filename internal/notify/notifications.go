@@ -1,10 +1,9 @@
-package loop
+package notify
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
 	"net/http"
 	"net/url"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/coder/websocket"
 )
 
@@ -64,7 +62,7 @@ type (
 )
 
 func (c *client) notificationEvents(ctx context.Context, cursor notificationCursor) <-chan notificationEvent {
-	events := make(chan notificationEvent, 64)
+	events := make(chan notificationEvent, 8)
 	go func() {
 		defer close(events)
 
@@ -243,6 +241,9 @@ func (wire notificationWire) notification(userID string) (notificationEvent, boo
 		}
 	}
 
+	event.body = excerpt(event.body)
+	event.post.Text = excerpt(event.post.Text)
+
 	return event, true
 }
 
@@ -262,22 +263,7 @@ func notificationRecipient(raw json.RawMessage, userID string) bool {
 	return json.Unmarshal(raw, &users) == nil && slices.Contains(users, userID)
 }
 
-func (m *app) waitNotificationEvent() tea.Cmd {
-	if m.notificationEvents == nil {
-		return nil
-	}
-
-	return func() tea.Msg {
-		event, ok := <-m.notificationEvents
-		if !ok {
-			return nil
-		}
-
-		return event
-	}
-}
-
-func (m *app) receiveNotification(event notificationEvent, now time.Time) tea.Cmd {
+func (m *daemon) receiveNotification(event notificationEvent, now time.Time) command {
 	m.notificationsDirty = true
 	if event.kind == "connected" || event.cursor.Connection != "" {
 		m.notificationCursor = event.cursor
@@ -316,6 +302,8 @@ func (m *app) receiveNotification(event notificationEvent, now time.Time) tea.Cm
 			event.team = m.api.teamIDs[0]
 		}
 
+		event.body = excerpt(event.body)
+		event.post.Text = excerpt(event.post.Text)
 		m.reminders[p.ID] = reminder{notificationEvent: event, due: now.Add(reminderInterval)}
 
 		return m.desktopNotice(event, false)
@@ -324,7 +312,7 @@ func (m *app) receiveNotification(event notificationEvent, now time.Time) tea.Cm
 	return nil
 }
 
-func (m *app) desktopNotice(event notificationEvent, repeat bool) tea.Cmd {
+func (m *daemon) desktopNotice(event notificationEvent, repeat bool) command {
 	if m.notifier == "" {
 		return nil
 	}
@@ -339,7 +327,7 @@ func (m *app) desktopNotice(event notificationEvent, repeat bool) tea.Cmd {
 		body = string(runes[:180]) + "…"
 	}
 
-	return func() tea.Msg {
+	return func() any {
 		ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
 		defer cancel()
 
@@ -352,7 +340,7 @@ func (m *app) desktopNotice(event notificationEvent, repeat bool) tea.Cmd {
 	}
 }
 
-func (m *app) modeFor(item reminder) reminderMode {
+func (m *daemon) modeFor(item reminder) reminderMode {
 	if item.summary != 0 || m.watchesChannel(item.post.ChannelID) || item.followed && !item.mentioned {
 		return untilRead
 	}
@@ -360,7 +348,7 @@ func (m *app) modeFor(item reminder) reminderMode {
 	return m.preferences.MentionReminder
 }
 
-func (m *app) acknowledgeReaction(react reaction) {
+func (m *daemon) acknowledgeReaction(react reaction) {
 	m.notificationsDirty = true
 	if item, ok := m.reminders[react.PostID]; ok && react.UserID == m.api.me.ID {
 		mode := m.modeFor(item)
@@ -370,7 +358,7 @@ func (m *app) acknowledgeReaction(react reaction) {
 	}
 }
 
-func (m *app) acknowledgeRead(channelID, rootID string, through int64) {
+func (m *daemon) acknowledgeRead(channelID, rootID string, through int64) {
 	m.notificationsDirty = true
 	for id, item := range m.reminders {
 		if item.post.ChannelID == channelID && item.post.RootID == rootID && item.post.CreatedAt <= through {
@@ -384,7 +372,7 @@ func (m *app) acknowledgeRead(channelID, rootID string, through int64) {
 	}
 }
 
-func (m *app) checkReminders(now time.Time) tea.Cmd {
+func (m *daemon) checkReminders(now time.Time) command {
 	if m.remindersChecking {
 		return nil
 	}
@@ -407,7 +395,7 @@ func (m *app) checkReminders(now time.Time) tea.Cmd {
 
 	m.remindersChecking = true
 
-	return func() tea.Msg {
+	return func() any {
 		ctx, cancel := context.WithTimeout(m.ctx, 12*time.Second)
 		defer cancel()
 
@@ -495,11 +483,11 @@ func (c *client) reminderReacted(ctx context.Context, id string, mode reminderMo
 	}), err
 }
 
-func (m *app) receiveReminderChecks(checks remindersChecked, now time.Time) tea.Cmd {
+func (m *daemon) receiveReminderChecks(checks remindersChecked, now time.Time) command {
 	m.notificationsDirty = true
 	m.remindersChecking = false
 
-	var notifications []tea.Cmd
+	var notifications []command
 
 	for _, check := range checks {
 		item, ok := m.reminders[check.id]
@@ -526,47 +514,22 @@ func (m *app) receiveReminderChecks(checks remindersChecked, now time.Time) tea.
 		m.reminders[check.id] = item
 	}
 
-	return tea.Batch(notifications...)
+	return batch(notifications...)
 }
 
-func (m *app) watchesChannel(id string) bool {
+func (m *daemon) watchesChannel(id string) bool {
 	return m.api != nil && m.preferences.WatchedChannels[m.api.baseURL][id]
 }
 
-func (m *app) toggleChannelNotifications(id string) {
-	m.notificationsDirty = true
-	if id == "" || m.api == nil {
-		return
-	}
-
-	if m.preferences.WatchedChannels == nil {
-		m.preferences.WatchedChannels = make(map[string]map[string]bool)
-	}
-
-	server := m.api.baseURL
-
-	watched := m.preferences.WatchedChannels[server]
-	if watched == nil {
-		watched = make(map[string]bool)
-		m.preferences.WatchedChannels[server] = watched
-	}
-
-	state := "on"
-
-	if watched[id] {
-		delete(watched, id)
-
-		state = "off"
-
-		for postID, item := range m.reminders {
-			if item.post.ChannelID == id && !item.mentioned && !item.followed {
-				delete(m.reminders, postID)
-			}
+func excerpt(text string) string {
+	n := 0
+	for i := range text {
+		if n == 180 {
+			return strings.Clone(text[:i])
 		}
-	} else {
-		watched[id] = true
+
+		n++
 	}
 
-	m.status = fmt.Sprintf("All-message alerts %s · %s", state, m.channelByID(id).DisplayName)
-	m.savePreferences()
+	return text
 }

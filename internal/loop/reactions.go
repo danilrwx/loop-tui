@@ -269,10 +269,6 @@ func (m *app) receiveReaction(result reactionResult) tea.Cmd {
 		m.keepEmojiSelection(selected)
 
 		id := m.reactionTarget.ID
-		for _, react := range result.items {
-			m.acknowledgeReaction(react)
-		}
-
 		for _, view := range []*conversation{&m.timeline, &m.discussion} {
 			if i := slices.IndexFunc(view.posts, func(p post) bool { return p.ID == id }); i >= 0 {
 				view.posts[i].Metadata.Reactions = result.items

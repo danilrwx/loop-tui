@@ -1,13 +1,16 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
-OUTPUT ?= loop-tui
+OUTPUT ?= loop
+DAEMON_OUTPUT ?= loopd
 VERSION ?= dev
 
 all: build
 
 build:
-	CGO_ENABLED=0 $(GO) build -mod=readonly -trimpath -ldflags='-s -w -X main.version=$(VERSION)' -o "$(OUTPUT).new" ./cmd/loop-tui
+	CGO_ENABLED=0 $(GO) build -mod=readonly -trimpath -ldflags='-s -w -X main.version=$(VERSION)' -o "$(OUTPUT).new" ./cmd/loop
 	mv -f "$(OUTPUT).new" "$(OUTPUT)"
+	CGO_ENABLED=0 $(GO) build -mod=readonly -trimpath -ldflags='-s -w -X main.version=$(VERSION)' -o "$(DAEMON_OUTPUT).new" ./cmd/loopd
+	mv -f "$(DAEMON_OUTPUT).new" "$(DAEMON_OUTPUT)"
 
 check:
 	$(GO) test -race -mod=readonly ./...

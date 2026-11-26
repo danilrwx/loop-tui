@@ -30,20 +30,33 @@ func main() {
 	server := flag.String("server", "", "Loop or Mattermost server URL (defaults to LOOP_SERVER)")
 	login := flag.Bool("login", false, "open the server in your browser")
 	demo := flag.Bool("demo", false, "try the interface offline with sample chats")
-	notifications := flag.Bool("notify", false, "run background notifications without the interface")
+	installService := flag.String("install-notification-service", "", "install and enable notifications using this absolute loopd path (Linux)")
+	syncService := flag.Bool("sync-notification-service", false, "update an installed notification service without changing its enabled state (Linux)")
 	showVersion := flag.Bool("version", false, "print the client version")
 
-	update := flag.Bool("update", false, "install the latest client release")
+	update := flag.Bool("update", false, "install the latest loop and loopd release")
 	checkUpdate := flag.Bool("check-update", false, "check for a newer client release")
 
 	flag.Parse()
+
+	if *installService != "" || *syncService {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+
+		if err := loop.ConfigureNotificationService(ctx, os.Stdout, *installService); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		return
+	}
 
 	if *update || *checkUpdate {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
 		app := updater.App{Name: "loop-tui", Repository: "danilrwx/loop-tui", Version: appVersion()}
-		if err := app.RunCLI(ctx, os.Stdout, *update); err != nil {
+		if err := loop.RunUpdateCLI(ctx, os.Stdout, app, *update); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -52,12 +65,12 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Println("loop-tui", appVersion())
+		fmt.Println("loop", appVersion())
 
 		return
 	}
 
-	if err := loop.Run(loop.Options{Server: *server, Login: *login, Demo: *demo, Version: appVersion(), Notifications: *notifications}); err != nil {
+	if err := loop.Run(loop.Options{Server: *server, Login: *login, Demo: *demo, Version: appVersion()}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

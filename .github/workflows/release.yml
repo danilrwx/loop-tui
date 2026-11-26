@@ -41,8 +41,9 @@ jobs:
           VERSION: ${{ github.ref_name }}
           ARCH: ${{ matrix.arch }}
         run: |
-          tar -xzf "dist/loop-tui_darwin_${ARCH}.tar.gz" -C dist loop-tui
-          test "$(dist/loop-tui --version)" = "loop-tui $VERSION"
+          tar -xzf "dist/loop-tui_darwin_${ARCH}.tar.gz" -C dist loop loopd
+          test "$(dist/loop --version)" = "loop $VERSION"
+          test "$(dist/loopd --version)" = "loopd $VERSION"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: loop-tui_${{ matrix.os }}_${{ matrix.arch }}

@@ -1,4 +1,4 @@
-package loop
+package notify
 
 import (
 	"context"
@@ -59,10 +59,13 @@ func TestNotificationQueueAndCursorSurviveRestart(t *testing.T) {
 
 	c := newClient("https://example.org", "secret-token")
 	c.me.ID = "me"
-	m := newApp(t.Context(), c)
+	m := newDaemon(t.Context(), c)
 	m.notificationStateName = c.notificationStateName()
+
 	m.notifier = "/bin/true"
-	m.Update(notificationEvent{kind: "posted", mentioned: true, post: post{ID: "post", ChannelID: "chat", UserID: "peer", Text: "hello", CreatedAt: 10}, cursor: notificationCursor{Connection: "socket", Sequence: 9}})
+	if err := m.process(notificationEvent{kind: "posted", mentioned: true, post: post{ID: "post", ChannelID: "chat", UserID: "peer", Text: "hello", CreatedAt: 10}, cursor: notificationCursor{Connection: "socket", Sequence: 9}}); err != nil {
+		t.Fatal(err)
+	}
 
 	path := filepath.Join(config, c.notificationStateName(), "settings.json")
 
@@ -77,13 +80,15 @@ func TestNotificationQueueAndCursorSurviveRestart(t *testing.T) {
 	}
 
 	m.background = true
-	m.Update(notifyError{errors.New("desktop bus unavailable")})
+	if err := m.process(notifyError{errors.New("desktop bus unavailable")}); err == nil {
+		t.Fatal("delivery failure was hidden")
+	}
 
 	if m.notificationFailure == nil {
 		t.Fatal("background delivery failure was hidden")
 	}
 
-	reopened := newApp(t.Context(), c)
+	reopened := newDaemon(t.Context(), c)
 
 	reopened.notificationStateName = c.notificationStateName()
 	if err = reopened.restoreNotifications(); err != nil {
@@ -100,7 +105,7 @@ func TestNotificationQueueAndCursorSurviveRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	final := newApp(t.Context(), c)
+	final := newDaemon(t.Context(), c)
 
 	final.notificationStateName = c.notificationStateName()
 	if err = final.restoreNotifications(); err != nil || len(final.reminders) != 0 {
@@ -111,7 +116,7 @@ func TestNotificationQueueAndCursorSurviveRestart(t *testing.T) {
 func TestRecoveryUsesUnreadCountsIncludingTeamMentionsAndThreads(t *testing.T) {
 	c := newClient("https://example.org", "token")
 	c.me.ID = "me"
-	m := newApp(t.Context(), c)
+	m := newDaemon(t.Context(), c)
 	m.notificationStateName = "test"
 	m.notifier = "/bin/true"
 	m.channels = []channel{{ID: "chat", DisplayName: "Chat", Mentions: 1, LastViewed: 100, Threads: []threadSignal{{root: "thread", team: "team", unread: 2, lastViewed: 100}}}, {ID: "ordinary", Unread: 99}}
@@ -238,7 +243,7 @@ func TestBackgroundNotificationsContinueWithoutUI(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	done := make(chan error, 1)
-	go func() { done <- runClient(ctx, c, false, "dev", true) }()
+	go func() { done <- runClient(ctx, c) }()
 
 	waitFor := func(count int) {
 		t.Helper()
@@ -257,7 +262,7 @@ func TestBackgroundNotificationsContinueWithoutUI(t *testing.T) {
 	}
 	waitFor(1)
 
-	ui := newApp(ctx, c)
+	ui := newDaemon(ctx, c)
 	ui.notifier = "/bin/true"
 
 	lease, err := ui.startNotifications()

@@ -191,8 +191,8 @@ func (m *app) renderSettings(width, height int, row func(string, bool, bool, boo
 	}
 
 	status := m.status
-	if status == "" && m.notifier == "" {
-		status = "Desktop alerts require notify-send"
+	if status == "" {
+		status = "Desktop alerts are delivered by loopd"
 	}
 
 	tui.ListDialog("Settings", choices, m.settingsCursor, width, height, status, hint, row)

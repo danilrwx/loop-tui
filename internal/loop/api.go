@@ -96,7 +96,7 @@ type client struct {
 }
 
 var (
-	errUnauthorized = errors.New("the server rejected the access token; restart loop-tui with a valid token")
+	errUnauthorized = errors.New("the server rejected the access token; restart loop with a valid token")
 	errNotFound     = errors.New("server returned HTTP 404")
 )
 

@@ -6,3 +6,8 @@
 /.env.*
 /go.work
 /go.work.sum
+
+/loop
+/loop.new
+/loopd
+/loopd.new

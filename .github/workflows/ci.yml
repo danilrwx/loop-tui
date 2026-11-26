@@ -23,4 +23,6 @@ jobs:
           args: --timeout=10m
       - run: make check
       - run: make build
-      - run: ./loop-tui --version
+      - run: ./loop --version
+      - run: ./loopd --version
+      - run: python3 scripts/install_test.py

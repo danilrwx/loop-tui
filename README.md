@@ -8,20 +8,20 @@ Available for Linux, macOS, and OpenBSD.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/danilrwx/loop-tui/main/scripts/install.sh | sh
-~/.local/bin/loop-tui --demo
+~/.local/bin/loop --demo
 ```
 
-The installer checks the archive’s SHA-256 checksum and installs to `~/.local/bin`. Set `LOOP_INSTALL_DIR` to choose another directory. The demo uses fictional chats offline. [Download a release archive](https://github.com/danilrwx/loop-tui/releases/latest) · [Build from source](CONTRIBUTING.md)
+The installer checks the archive’s SHA-256 checksum and installs `loop` (interface) and `loopd` (background notifications) to `~/.local/bin`. Set `LOOP_INSTALL_DIR` to choose another directory. On Linux, the installer also installs and enables a user systemd service for background notifications when user systemd is available. Configure noninteractive login and install `notify-send` for notifications to work. The demo uses fictional chats offline. [Download a release archive](https://github.com/danilrwx/loop-tui/releases/latest) · [Build from source](CONTRIBUTING.md)
 
 ![Loop TUI showing favorites, unread chats, a Markdown table, and an open thread](docs/demo.png)
 
 ## Connect to your server
 
 ```sh
-~/.local/bin/loop-tui --server https://chat.example.org
+~/.local/bin/loop --server https://chat.example.org
 ```
 
-Enter an access token for that server when prompted. You can set `LOOP_SERVER` and pass the token through `LOOP_TOKEN` for noninteractive startup. Your administrator controls whether personal access tokens are available. [Mattermost token documentation](https://docs.mattermost.com/developers/integrate/reference/personal-access-token)
+An existing Matterhorn browser SSO configuration is reused automatically for its configured server. Otherwise, enter an access token for that server when prompted. You can set `LOOP_SERVER` and pass the token through `LOOP_TOKEN` for noninteractive startup. Your administrator controls whether personal access tokens are available. [Mattermost token documentation](https://docs.mattermost.com/developers/integrate/reference/personal-access-token)
 
 ## What you can do
 

@@ -2,9 +2,7 @@ package loop
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -89,13 +87,6 @@ func (c *conversation) replace(posts []post) {
 }
 
 type app struct {
-	background                       bool
-	notificationStateName            string
-	notificationCursor               notificationCursor
-	notificationsDirty               bool
-	notificationFailure              error
-	notificationExecutable           string
-	notificationBinary               os.FileInfo
 	updateApp                        updater.App
 	pendingUpdate, updateDialog      *tui.UpdateDialog
 	ctx                              context.Context
@@ -169,10 +160,6 @@ type app struct {
 	resourceOpening                  bool
 	resourceMode                     string
 	status                           string
-	notifier                         string
-	notificationEvents               <-chan notificationEvent
-	reminders                        map[string]reminder
-	remindersChecking                bool
 }
 
 func (m *app) username() string {
@@ -232,7 +219,7 @@ func newApp(ctx context.Context, api *client) *app {
 
 	return &app{
 		ctx: ctx, api: api, query: query, draft: draft,
-		reactionCustomIndex: -1, reactionEmojiQuery: emojiQuery, drafts: make(map[draftKey]string), draftFiles: make(map[draftKey][]draftAttachment), reminders: make(map[string]reminder),
+		reactionCustomIndex: -1, reactionEmojiQuery: emojiQuery, drafts: make(map[draftKey]string), draftFiles: make(map[draftKey][]draftAttachment),
 	}
 }
 
@@ -241,7 +228,7 @@ func nextTick() tea.Cmd {
 }
 
 func (m *app) Init() tea.Cmd {
-	return tea.Batch(nextTick(), m.loadChannels(), m.waitNotificationEvent(), m.checkUpdate())
+	return tea.Batch(nextTick(), m.loadChannels(), m.checkUpdate())
 }
 
 func (m *app) loadChannels() tea.Cmd {
@@ -316,16 +303,6 @@ func (m *app) loadHistory(thread, older, mark, force bool) tea.Cmd {
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
-	if m.notificationsDirty && m.notificationStateName != "" {
-		if err := m.saveNotifications(); err != nil {
-			m.notificationFailure = err
-
-			m.status = err.Error()
-			if m.background {
-				return m, tea.Quit
-			}
-		}
-	}
 
 	if m.pendingUpdate != nil && !m.composing && !m.attachmentEditing && len(m.dialogPopup().Lines) == 0 {
 		m.updateDialog, m.pendingUpdate = m.pendingUpdate, nil
@@ -387,61 +364,24 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateDialog.Complete(msg.err)
 		}
 
-	case notificationEvent:
-		command := m.receiveNotification(msg, time.Now())
-		if msg.kind == "connected" {
-			return m, tea.Batch(m.waitNotificationEvent(), m.loadChannels())
-		}
-
-		return m, tea.Batch(m.waitNotificationEvent(), command)
-	case remindersChecked:
-		return m, m.receiveReminderChecks(msg, time.Now())
-	case notifyError:
-		if m.background {
-			m.notificationFailure = msg.err
-			return m, tea.Quit
-		}
-
-		m.status = "Desktop notification: " + msg.err.Error()
 	case tickMsg:
-		if m.background {
-			if m.notifierBinaryChanged() {
-				return m, tea.Quit
-			}
-
-			m.loadPreferences()
-
-			for id, item := range m.reminders {
-				if !item.mentioned && !item.followed && !m.watchesChannel(item.post.ChannelID) {
-					delete(m.reminders, id)
-					m.notificationsDirty = true
-				}
-			}
-		}
-
-		reminders := m.checkReminders(time.Time(msg))
-
 		var sidebar, discussions tea.Cmd
-		if !m.background && m.sequence == 0 || time.Time(msg).Unix()/5%3 == 0 {
+		if m.sequence == 0 || time.Time(msg).Unix()/5%3 == 0 {
 			sidebar = m.loadChannels()
-			if !m.background && m.active == discussionsID && !m.discussionsLoading {
+			if m.active == discussionsID && !m.discussionsLoading {
 				discussions = m.loadDiscussions(true)
 			}
 		}
 
 		if m.deleteTarget.ID != "" || m.reactionTarget.ID != "" {
-			return m, tea.Batch(nextTick(), reminders, sidebar, discussions)
+			return m, tea.Batch(nextTick(), sidebar, discussions)
 		}
 		// Polling never acknowledges reads, even when the open panes are hidden.
-		return m, tea.Batch(nextTick(), reminders, sidebar, discussions, m.loadHistory(false, false, false, false), m.loadHistory(true, false, false, false))
+		return m, tea.Batch(nextTick(), sidebar, discussions, m.loadHistory(false, false, false, false), m.loadHistory(true, false, false, false))
 	case channelsResult:
 		m.channelsLoading = false
 		if msg.err != nil {
 			m.status = "Chats: " + msg.err.Error()
-			if m.background && errors.Is(msg.err, errUnauthorized) {
-				m.notificationFailure = msg.err
-				return m, tea.Quit
-			}
 
 			break
 		}
@@ -459,12 +399,7 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		}
 
-		return m, m.recoverNotifications(time.Now())
 	case historyResult:
-		if msg.marked && len(msg.page.posts) > 0 {
-			m.acknowledgeRead(msg.channelID, msg.rootID, msg.page.posts[0].CreatedAt)
-		}
-
 		return m, m.receiveHistory(msg)
 	case mentionQuery:
 		return m, m.queryMention(uint64(msg))
@@ -534,7 +469,6 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Mark as read: " + msg.err.Error()
 		} else {
 			m.setRead(msg.channelID)
-			m.acknowledgeRead(msg.channelID, "", msg.through)
 
 			if m.active == msg.channelID {
 				m.timeline.readThrough = max(m.timeline.readThrough, msg.through)

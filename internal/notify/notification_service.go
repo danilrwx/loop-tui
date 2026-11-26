@@ -1,4 +1,4 @@
-package loop
+package notify
 
 import (
 	"crypto/sha256"
@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/danilrwx/telega/tui"
 	"golang.org/x/sys/unix"
 )
 
@@ -29,7 +27,7 @@ func (c *client) notificationStateName() string {
 	return fmt.Sprintf("loop-tui/notifications/%x", key)
 }
 
-// The UI and the background service share one notification owner per account.
+// Only one notification daemon can own the queue for an account.
 func (c *client) notificationLease() (*os.File, error) {
 	config, err := os.UserConfigDir()
 	if err != nil {
@@ -59,7 +57,7 @@ func (c *client) notificationLease() (*os.File, error) {
 	return file, nil
 }
 
-func (m *app) startNotifications() (*os.File, error) {
+func (m *daemon) startNotifications() (*os.File, error) {
 	for {
 		lease, err := m.api.notificationLease()
 		if err != nil {
@@ -90,9 +88,9 @@ func (m *app) startNotifications() (*os.File, error) {
 	}
 }
 
-func (m *app) restoreNotifications() error {
+func (m *daemon) restoreNotifications() error {
 	var state notificationState
-	if err := tui.ReadSettings(m.notificationStateName, &state); err != nil {
+	if err := readSettings(m.notificationStateName, &state); err != nil {
 		return fmt.Errorf("load pending notifications: %w", err)
 	}
 
@@ -111,7 +109,7 @@ func (m *app) restoreNotifications() error {
 	return nil
 }
 
-func (m *app) saveNotifications() error {
+func (m *daemon) saveNotifications() error {
 	state := notificationState{Cursor: m.notificationCursor, Pending: make(map[string]savedNotification, len(m.reminders))}
 	for id, item := range m.reminders {
 		p := item.post
@@ -122,7 +120,7 @@ func (m *app) saveNotifications() error {
 		}
 	}
 
-	if err := tui.WriteSettings(m.notificationStateName, state); err != nil {
+	if err := writeSettings(m.notificationStateName, state); err != nil {
 		return fmt.Errorf("save pending notifications: %w", err)
 	}
 
@@ -132,14 +130,14 @@ func (m *app) saveNotifications() error {
 }
 
 // A server unread count recovers attention even when WebSocket replay has expired.
-func (m *app) recoverNotifications(now time.Time) tea.Cmd {
+func (m *daemon) recoverNotifications(now time.Time) command {
 	if m.notificationStateName == "" {
 		return nil
 	}
 
 	active := make(map[string]bool)
 
-	var commands []tea.Cmd
+	var commands []command
 
 	recoverScope := func(id string, event notificationEvent, count int, viewed int64) {
 		known := 0
@@ -191,10 +189,10 @@ func (m *app) recoverNotifications(now time.Time) tea.Cmd {
 		}
 	}
 
-	return tea.Batch(commands...)
+	return batch(commands...)
 }
 
-func (m *app) notifierBinaryChanged() bool {
+func (m *daemon) notifierBinaryChanged() bool {
 	if m.notificationExecutable == "" || m.notificationBinary == nil {
 		return false
 	}

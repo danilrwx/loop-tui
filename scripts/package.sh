@@ -26,7 +26,7 @@ export GOOS="${target%/*}" GOARCH="$arch"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$output"
-make build VERSION="$version" OUTPUT="$work/loop-tui"
+make build VERSION="$version" OUTPUT="$work/loop" DAEMON_OUTPUT="$work/loopd"
 cp README.md LICENSE "$work/"
 mkdir -p "$work/docs"
 cp docs/usage.md docs/demo.png "$work/docs/"
@@ -43,7 +43,7 @@ go mod vendor -o "$work/vendor"
             cat "$file"
         done
 ) > "$work/THIRD_PARTY_LICENSES"
-set -- loop-tui README.md LICENSE THIRD_PARTY_LICENSES docs
+set -- loop loopd README.md LICENSE THIRD_PARTY_LICENSES docs
 if [ "$GOOS" = linux ]; then
     cp contrib/loop-tui-notifications.service "$work/"
     set -- "$@" loop-tui-notifications.service

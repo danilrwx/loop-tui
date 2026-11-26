@@ -1,4 +1,4 @@
-package loop
+package notify
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -129,7 +128,7 @@ func TestRemindersStopOnTheConfiguredAcknowledgement(t *testing.T) {
 
 	c := newClient(server.URL, "test")
 	c.me.ID = "me"
-	m := newApp(t.Context(), c)
+	m := newDaemon(t.Context(), c)
 	m.notifier = "/bin/true"
 	m.preferences.MentionReminder = untilEyes
 	m.toggleChannelNotifications("duty")
@@ -206,26 +205,6 @@ func TestRemindersStopOnTheConfiguredAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestNotificationSettingsPersist(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	c := newClient("https://example.org", "test")
-	m := newApp(t.Context(), c)
-	m.loadPreferences()
-	m.channels = []channel{{ID: "duty", DisplayName: "Duty"}, {ID: "general", DisplayName: "General"}}
-	m.channelCursor = "duty"
-	m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("N")})
-	m.settingsCursor = 3
-	m.settingsKey(tea.KeyMsg{Type: tea.KeyEnter})
-
-	reopened := newApp(t.Context(), c)
-	reopened.loadPreferences()
-
-	if !reopened.watchesChannel("duty") || reopened.watchesChannel("general") || reopened.preferences.MentionReminder != untilEyes {
-		t.Fatalf("unexpected notification settings after restart: %+v", reopened.preferences)
-	}
-}
-
 func TestNotificationsIncludeFollowedThreadsAndServerMentionRecipients(t *testing.T) {
 	for _, scenario := range []struct {
 		name, text, root            string
@@ -253,7 +232,7 @@ func TestNotificationsIncludeFollowedThreadsAndServerMentionRecipients(t *testin
 
 			c := newClient("https://example.org", "test")
 			c.me.ID = "me"
-			m := newApp(t.Context(), c)
+			m := newDaemon(t.Context(), c)
 			m.notifier = "/bin/true"
 			m.preferences.MentionReminder = untilEyes
 
@@ -284,7 +263,7 @@ func TestNotificationsIncludeFollowedThreadsAndServerMentionRecipients(t *testin
 
 func TestDisablingChannelAlertsKeepsThreadSubscriptions(t *testing.T) {
 	c := newClient("https://example.org", "test")
-	m := newApp(t.Context(), c)
+	m := newDaemon(t.Context(), c)
 	m.notifier = "/bin/true"
 	m.toggleChannelNotifications("chat")
 	m.receiveNotification(notificationEvent{kind: "posted", followed: true, post: post{ID: "reply", ChannelID: "chat", RootID: "thread", CreatedAt: 1}}, time.Now())
@@ -292,5 +271,40 @@ func TestDisablingChannelAlertsKeepsThreadSubscriptions(t *testing.T) {
 
 	if _, ok := m.reminders["reply"]; !ok {
 		t.Fatal("channel-wide alerts must not disable notifications for followed threads")
+	}
+}
+
+func (m *daemon) toggleChannelNotifications(id string) {
+	if m.preferences.WatchedChannels == nil {
+		m.preferences.WatchedChannels = make(map[string]map[string]bool)
+	}
+
+	watched := m.preferences.WatchedChannels[m.api.baseURL]
+	if watched == nil {
+		watched = make(map[string]bool)
+		m.preferences.WatchedChannels[m.api.baseURL] = watched
+	}
+
+	if watched[id] {
+		delete(watched, id)
+
+		for key, item := range m.reminders {
+			if item.post.ChannelID == id && !item.followed && !item.mentioned {
+				delete(m.reminders, key)
+			}
+		}
+	} else {
+		watched[id] = true
+	}
+}
+
+func TestQueuedNotificationKeepsOnlyShortExcerpts(t *testing.T) {
+	text := strings.Repeat("я", 10000)
+	postJSON, _ := json.Marshal(post{ID: "message", UserID: "peer", ChannelID: "chat", Text: text, CreatedAt: 1})
+	data, _ := json.Marshal(map[string]string{"post": string(postJSON), "mentions": `["me"]`})
+
+	event, ok := (notificationWire{Event: "posted", Data: data}).notification("me")
+	if !ok || len([]rune(event.body)) != 180 || len([]rune(event.post.Text)) != 180 {
+		t.Fatal("queued notification retained a complete message")
 	}
 }
