@@ -42,6 +42,8 @@ github.com/danilrwx/telega v0.3.2-0.20261126115025-95441b4590ea h1:cVECCw/6d1oxH
 github.com/danilrwx/telega v0.3.2-0.20261126115025-95441b4590ea/go.mod h1:tx2umZ05kc1sT5J1Mp5209aoYUsl5ZXnnQJShxg2aJc=
 github.com/danilrwx/telega v0.3.2-0.20261126120924-ff2dbd4384a8 h1:ArrPhnSmunDVQGwwU4d8mpIAsx2JDLJVnUQnnvfSmhw=
 github.com/danilrwx/telega v0.3.2-0.20261126120924-ff2dbd4384a8/go.mod h1:tx2umZ05kc1sT5J1Mp5209aoYUsl5ZXnnQJShxg2aJc=
+github.com/danilrwx/telega v0.3.2 h1:lcIcyYvGeF0Eb0xlPd/HhKiupKLmDIJGzBjNhok/RCs=
+github.com/danilrwx/telega v0.3.2/go.mod h1:tx2umZ05kc1sT5J1Mp5209aoYUsl5ZXnnQJShxg2aJc=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/kyokomi/emoji/v2 v2.2.14 h1:YOF6VL52613M0Qr9v4puJDD9QQPmyyjXedDDlrGzH80=
