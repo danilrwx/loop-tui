@@ -94,6 +94,7 @@ type app struct {
 	width, height                    int
 	inlineImages                     *tui.InlineImages
 	inlineLoading                    bool
+	inlineGraphicsChecking           bool
 	focus                            focus
 	fullPane                         bool
 	channels                         []channel
@@ -372,6 +373,8 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
+		graphics := m.refreshInlineGraphics(false)
+
 		var sidebar, discussions tea.Cmd
 		if m.sequence == 0 || time.Time(msg).Unix()/5%3 == 0 {
 			sidebar = m.loadChannels()
@@ -381,10 +384,10 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.deleteTarget.ID != "" || m.reactionTarget.ID != "" {
-			return m, tea.Batch(nextTick(), sidebar, discussions)
+			return m, tea.Batch(nextTick(), sidebar, discussions, graphics)
 		}
 		// Polling never acknowledges reads, even when the open panes are hidden.
-		return m, tea.Batch(nextTick(), sidebar, discussions, m.loadHistory(false, false, false, false), m.loadHistory(true, false, false, false))
+		return m, tea.Batch(nextTick(), sidebar, discussions, graphics, m.loadHistory(false, false, false, false), m.loadHistory(true, false, false, false))
 	case channelsResult:
 		m.channelsLoading = false
 		if msg.err != nil {
@@ -504,6 +507,8 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.timeline.readThrough = max(m.timeline.readThrough, msg.through)
 			}
 		}
+	case inlineGraphicsRefreshed:
+		m.inlineGraphicsChecking = false
 	case inlineImageResult:
 		m.inlineLoading = false
 		if m.inlineImages != nil {
@@ -1174,14 +1179,19 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 
 		return m.openChannel()
 	case "R":
+		if m.inlineImages != nil {
+			m.inlineImages.Clear()
+		}
+
+		graphics := m.refreshInlineGraphics(true)
 		m.timeline.anchored = false
 
 		m.status = ""
 		if m.active == discussionsID && !m.discussionsLoading {
-			return tea.Batch(m.loadChannels(), m.loadDiscussions(false), m.loadHistory(true, false, false, true))
+			return tea.Batch(graphics, m.loadChannels(), m.loadDiscussions(false), m.loadHistory(true, false, false, true))
 		}
 
-		return tea.Batch(m.loadChannels(), m.loadHistory(false, false, false, true), m.loadHistory(true, false, false, true))
+		return tea.Batch(graphics, m.loadChannels(), m.loadHistory(false, false, false, true), m.loadHistory(true, false, false, true))
 	case "tab":
 		m.fullPane = false
 		if m.focus == channelsPane && m.active != "" {

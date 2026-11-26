@@ -253,3 +253,16 @@ func (m *app) inlineReactionLine(items []reaction, width int) string {
 
 	return tui.ReactionBadges("↳ ", badges, width)
 }
+
+type inlineGraphicsRefreshed struct{}
+
+func (m *app) refreshInlineGraphics(force bool) tea.Cmd {
+	if m.inlineImages == nil || m.inlineGraphicsChecking || !force && m.inlineImages.Enabled() {
+		return nil
+	}
+
+	m.inlineGraphicsChecking = true
+	output := m.inlineImages
+
+	return func() tea.Msg { output.Refresh(); return inlineGraphicsRefreshed{} }
+}

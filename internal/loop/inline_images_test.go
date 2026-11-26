@@ -150,3 +150,65 @@ func TestAttachmentAndCustomEmojiRenderInConversation(t *testing.T) {
 		t.Fatal("plain terminal should retain text reaction labels")
 	}
 }
+
+func TestAvatarsRecoverInTheSameOutputAfterGraphicsEnable(t *testing.T) {
+	t.Setenv("TUI_GRAPHICS", "off")
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 32, 32))); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(data.Bytes()) }))
+
+	defer server.Close()
+
+	file, err := os.CreateTemp(t.TempDir(), "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+
+	m := newApp(t.Context(), newClient(server.URL, "fixture"))
+	m.width, m.height = 100, 24
+	m.active, m.focus = "chat", channelPane
+	m.timeline.posts = []post{{ID: "post", UserID: "author", Author: "Test Author", Text: "hello"}}
+	m.inlineImages = tui.NewImageOutput(file)
+
+	output := m.inlineImages
+	if m.loadVisibleImages() != nil {
+		t.Fatal("disabled output requested an avatar")
+	}
+
+	t.Setenv("TUI_GRAPHICS", "sixel")
+
+	refresh := m.refreshInlineGraphics(false)
+	if refresh == nil {
+		t.Fatal("disabled graphics were never rechecked")
+	}
+
+	_, load := m.Update(refresh())
+	if load == nil {
+		t.Fatal("enabling graphics did not schedule the missing avatar")
+	}
+
+	m.Update(load())
+
+	if m.inlineImages != output || m.inlineImages.Get("avatar:author") == nil {
+		t.Fatal("avatar did not appear in the original output writer")
+	}
+
+	if _, err := output.WriteString(m.View()); err != nil {
+		t.Fatal(err)
+	}
+
+	wire, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Contains(wire, []byte("\x1bP0;1q")) || bytes.Contains(wire, []byte("\U0010EEEE")) {
+		t.Fatal("avatar was not sent as a Sixel image")
+	}
+}

@@ -3,10 +3,14 @@ package loop
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,6 +33,11 @@ func (m *previewTestModel) Init() tea.Cmd {
 }
 
 func TestImagePreviewInRealTerminal(t *testing.T) {
+	if os.Getenv("LOOP_INLINE_VISUAL_HELPER") == "1" {
+		runInlineVisualHelper(t)
+		return
+	}
+
 	if os.Getenv("LOOP_PREVIEW_HELPER") == "1" {
 		var encoded bytes.Buffer
 		if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 96, 64))); err != nil {
@@ -155,5 +164,82 @@ func TestImagePreviewInRealTerminal(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf("image preview did not render or restore the UI (shown=%t): %q", previewShown, output)
 		}
+	}
+}
+
+type inlineVisualModel struct {
+	*app
+	enable  string
+	enabled bool
+}
+
+func (m *inlineVisualModel) Init() tea.Cmd { return nextTick() }
+func (m *inlineVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if !m.enabled {
+		if _, err := os.Stat(m.enable); err == nil {
+			_ = os.Setenv("TUI_GRAPHICS", "sixel")
+			m.enabled = true
+		}
+	}
+
+	_, cmd := m.app.Update(msg)
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		_ = os.WriteFile(m.enable+".ready", []byte("ready"), 0o600)
+	}
+
+	return m, cmd
+}
+
+func runInlineVisualHelper(t *testing.T) {
+	t.Helper()
+	t.Setenv("TUI_GRAPHICS", "off")
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	src := image.NewRGBA(image.Rect(0, 0, 32, 32))
+
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			src.SetRGBA(x, y, color.RGBA{R: 255, A: 255})
+		}
+	}
+
+	var data bytes.Buffer
+	if err := png.Encode(&data, src); err != nil {
+		t.Fatal(err)
+	}
+
+	posts := []post{
+		{ID: "one", UserID: "author", Author: "Visual first", Text: "First avatar should be red.", ChannelID: "chat", CreatedAt: time.Now().UnixMilli()},
+		{ID: "two", UserID: "author-two", Author: "Visual second", Text: "Second avatar should be red.", ChannelID: "chat", CreatedAt: time.Now().Add(-time.Minute).UnixMilli()},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/image"):
+			_, _ = w.Write(data.Bytes())
+		case r.URL.Path == "/api/v4/channels/chat/posts":
+			_ = json.NewEncoder(w).Encode(postList{Order: []string{"one", "two"}, Posts: map[string]post{"one": posts[0], "two": posts[1]}})
+		case r.URL.Path == "/api/v4/users/me/channels":
+			_, _ = io.WriteString(w, `[{"id":"chat","display_name":"Avatar visual check"}]`)
+		default:
+			_, _ = io.WriteString(w, "[]")
+		}
+	}))
+	defer server.Close()
+
+	m := newApp(t.Context(), newClient(server.URL, "fixture"))
+	m.preferences.HideChatListWhenOpen = true
+	m.preferences.ManualRead = true
+	m.active, m.focus = "chat", channelPane
+	m.sequence = 1
+	m.channels = []channel{{ID: "chat", DisplayName: "Avatar visual check"}}
+	m.timeline.posts = posts
+
+	m.inlineImages = tui.NewImageOutput(os.Stdout)
+	defer m.inlineImages.Clear()
+
+	model := &inlineVisualModel{app: m, enable: os.Getenv("LOOP_INLINE_ENABLE_FILE")}
+	if _, err := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(m.inlineImages), tea.WithAltScreen()).Run(); err != nil {
+		t.Fatal(err)
 	}
 }

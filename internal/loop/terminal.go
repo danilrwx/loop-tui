@@ -86,12 +86,10 @@ func runClient(ctx context.Context, api *client, demo bool, version string) erro
 
 	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
 
-	model.inlineImages = tui.NewInlineImages(os.Stdout)
-	if model.inlineImages != nil {
-		defer model.inlineImages.Clear()
+	model.inlineImages = tui.NewImageOutput(os.Stdout)
+	defer model.inlineImages.Clear()
 
-		options = append(options, tea.WithOutput(model.inlineImages))
-	}
+	options = append(options, tea.WithOutput(model.inlineImages))
 
 	_, err := tea.NewProgram(model, options...).Run()
 
