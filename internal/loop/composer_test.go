@@ -120,7 +120,8 @@ func TestSidebarSettingsAreIndependentAndPersistent(t *testing.T) {
 	model.focus = channelPane
 	model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
 
-	for range settingCount - 1 {
+	model.settingsCursor = 0
+	for range 6 {
 		model.key(tea.KeyMsg{Type: tea.KeyDown})
 	}
 

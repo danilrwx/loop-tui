@@ -8,6 +8,7 @@ import (
 )
 
 type sidebarSettings struct {
+	ManualRead bool `json:"manual_read,omitempty"`
 	tui.AvatarSettings
 	HideReadChannels     bool                       `json:"hide_read_channels"`
 	HideReadDirect       bool                       `json:"hide_read_direct_messages"`
@@ -70,7 +71,7 @@ func (m *app) resizeSidebar(n int) {
 	}
 }
 
-const settingCount = 7
+const settingCount = 8
 
 func (m *app) settingsKey(key tea.KeyMsg) {
 	name := commandKeyName(key)
@@ -127,6 +128,8 @@ func (m *app) settingsKey(key tea.KeyMsg) {
 			return
 		case 5:
 			m.preferences.HideAvatars = !m.preferences.HideAvatars
+		case 7:
+			m.preferences.ManualRead = !m.preferences.ManualRead
 		case 6:
 			m.preferences.HideChatListWhenOpen = !m.preferences.HideChatListWhenOpen
 		}
@@ -170,6 +173,11 @@ func (m *app) renderSettings(width, height int, row func(string, bool, bool, boo
 		hideChatList = "On"
 	}
 
+	markRead := "On open"
+	if m.preferences.ManualRead {
+		markRead = "Only m"
+	}
+
 	options := [...]struct{ label, value string }{
 		{"Sidebar width", sidebar},
 		{"Channels", chatMode(m.preferences.HideReadChannels)},
@@ -178,6 +186,7 @@ func (m *app) renderSettings(width, height int, row func(string, bool, bool, boo
 		{label, alerts},
 		{"Avatars", m.preferences.AvatarMode()},
 		{"Hide chat list when open", hideChatList},
+		{"Mark read", markRead},
 	}
 
 	choices := make([]string, 0, settingCount)

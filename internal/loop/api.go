@@ -49,6 +49,7 @@ func (c channel) hasUnread() bool {
 
 type threadSignal struct {
 	root, team       string
+	preview          string
 	unread, mentions int
 	lastViewed       int64
 }
@@ -474,7 +475,7 @@ func (c *client) loadUnreadThreads(ctx context.Context, team string, byChannel m
 
 			seen[p.ID] = true
 			byChannel[p.ChannelID] = append(byChannel[p.ChannelID], threadSignal{
-				root: p.ID, team: team, unread: max(thread.Unread, thread.Mentions),
+				root: p.ID, team: team, preview: strings.Join(strings.Fields(p.Text), " "), unread: max(thread.Unread, thread.Mentions),
 				mentions: thread.Mentions, lastViewed: thread.LastViewed,
 			})
 		}

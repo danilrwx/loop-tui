@@ -25,9 +25,10 @@ type followedThread struct {
 }
 
 type discussionsResult struct {
-	items []followedThread
-	more  bool
-	err   error
+	revision uint64
+	items    []followedThread
+	more     bool
+	err      error
 }
 
 type followThreadResult struct {
@@ -141,6 +142,7 @@ func (m *app) loadDiscussions(firstPage bool) tea.Cmd {
 		m.timeline.loading = true
 	}
 
+	revision := m.readRevision
 	cachePath := m.discussionCachePath
 
 	var previous []followedThread
@@ -158,12 +160,16 @@ func (m *app) loadDiscussions(firstPage bool) tea.Cmd {
 			saveDiscussionCache(cachePath, items)
 		}
 
-		return discussionsResult{items, more, err}
+		return discussionsResult{items: items, more: more, err: err, revision: revision}
 	}
 }
 
 func (m *app) receiveDiscussions(msg discussionsResult) tea.Cmd {
 	m.discussionsLoading = false
+	if msg.err == nil && msg.revision != m.readRevision {
+		return m.loadDiscussions(true)
+	}
+
 	if m.active == discussionsID {
 		m.timeline.loading = false
 		if msg.err != nil {
@@ -325,41 +331,34 @@ func (m *app) removeFollowedThread(root string) {
 	}
 }
 
-// Jump directly by root ID: an old thread need not be loaded in the channel page.
+// n advances without acknowledging a thread in manual-read mode.
 func (m *app) openUnreadThread() tea.Cmd {
-	ch := m.conversationChannel(m.focus == threadPane)
-	if m.focus == channelsPane {
-		ch = m.channelByID(m.channelCursor)
-	}
-
-	if ch.ID == discussionsID || m.active == discussionsID && m.focus != channelsPane {
-		for _, candidate := range m.channels {
-			if len(candidate.Threads) > 0 {
-				ch = candidate
-				break
-			}
-		}
-	}
-
-	if len(ch.Threads) == 0 {
-		m.status = "No unread threads in this chat"
+	choices := m.unreadThreadChoices()
+	if len(choices) == 0 {
+		m.status = "No unread threads in this scope"
 		return nil
 	}
 
-	root := ch.Threads[0].root
+	index := 0
 
-	var load tea.Cmd
-	if m.focus == channelsPane {
-		load = m.openChannel()
+	if m.preferences.ManualRead {
+		if current := slices.IndexFunc(choices, func(item unreadChoice) bool { return item.signal.root == m.root }); current >= 0 {
+			if len(choices) == 1 {
+				m.status = "No other unread threads; m marks this thread read"
+				return nil
+			}
+
+			index = (current + 1) % len(choices)
+		} else if next := slices.IndexFunc(choices, func(item unreadChoice) bool { return item.signal.root == m.unreadNext }); next >= 0 {
+			index = next
+		}
 	}
 
-	p := post{ID: root, ChannelID: ch.ID}
-	if index := slices.IndexFunc(m.timeline.posts, func(p post) bool { return p.ID == root }); index >= 0 && m.active == ch.ID {
-		m.timeline.selectIndex(index)
-		p = m.timeline.posts[index]
+	if choices[index].signal.root == m.root && m.discussion.loading {
+		return nil
 	}
 
-	return tea.Batch(load, m.openThread(p, false))
+	return m.openUnreadChoice(choices[index])
 }
 
 // Channel snapshots contain all unread followed threads, including older cached roots.

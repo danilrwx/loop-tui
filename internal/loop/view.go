@@ -271,13 +271,13 @@ func (m *app) hints() string {
 	case m.filtering:
 		return "↑↓ choose  Enter open  Esc clear"
 	case m.focus == channelsPane:
-		return "n unread thread  jk move  d DMs  c channels  N alerts  / chats  Ctrl+F messages  S settings"
+		return "n next  u unread threads  jk move  d DMs  c channels  N alerts  / chats  Ctrl+F messages  S settings"
 	case m.focus == threadPane:
-		return "n next unread thread  jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  x details  JK posts  h back  m read  D delete  i reply  a attach  V files  o open  O links/files"
+		return "n next  u unread threads  m read  jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  x details  JK posts  h back  m read  D delete  i reply  a attach  V files  o open  O links/files"
 	case isFeed(m.active):
-		return "n unread thread  jk scroll  Ctrl+U/D page  Enter open  f filter  w/W follow  R refresh  h chats"
+		return "n next  u unread threads  jk scroll  Ctrl+U/D page  Enter open  f filter  w/W follow  R refresh  h chats"
 	default:
-		keys := "n unread thread  jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  JK posts  t thread  m read  D delete  i write  a attach  V files  o open  O links/files"
+		keys := "n next  u unread threads  jk scroll  Ctrl+U/D page  F expand  ? messages  w/W follow  v read  z react  Z authors  JK posts  t thread  m read  D delete  i write  a attach  V files  o open  O links/files"
 		if m.preferences.HideChatListWhenOpen {
 			keys = "h chats  " + keys
 		}
@@ -755,6 +755,8 @@ func (m *app) dialogPopup() tui.DialogPopup {
 
 		maxWidth = tui.FormPopupWidth
 		render = confirm.Render
+	case m.unreadChoices != nil:
+		render = m.renderUnreadThreads
 	case m.messageSearch != nil:
 		render = m.messageSearch.Render
 	case m.filtering:

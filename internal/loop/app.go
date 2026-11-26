@@ -102,6 +102,10 @@ type app struct {
 	timeline, discussion             conversation
 	sequence                         uint64
 	channelsLoading                  bool
+	readRevision                     uint64
+	unreadChoices                    []unreadChoice
+	unreadSelection                  int
+	unreadNext                       string
 	preferences                      sidebarSettings
 	layoutSettings                   tui.LayoutSettings
 	configEnabled, settingsOpen      bool
@@ -173,8 +177,9 @@ func (m *app) username() string {
 type (
 	tickMsg        time.Time
 	channelsResult struct {
-		items []channel
-		err   error
+		revision uint64
+		items    []channel
+		err      error
 	}
 )
 
@@ -192,6 +197,7 @@ type sendResult struct {
 }
 type readResult struct {
 	channelID string
+	rootID    string
 	through   int64
 	err       error
 }
@@ -237,10 +243,11 @@ func (m *app) loadChannels() tea.Cmd {
 	}
 
 	m.channelsLoading = true
+	revision := m.readRevision
 
 	return func() tea.Msg {
 		items, err := m.api.channels(m.ctx)
-		return channelsResult{items: items, err: err}
+		return channelsResult{items: items, err: err, revision: revision}
 	}
 }
 
@@ -386,6 +393,10 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		if msg.revision != m.readRevision {
+			return m, m.loadChannels()
+		}
+
 		m.channels = msg.items
 		m.syncDiscussionUnread()
 
@@ -400,7 +411,15 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case historyResult:
-		return m, m.receiveHistory(msg)
+		command := m.receiveHistory(msg)
+		if msg.marked {
+			m.readRevision++
+			if msg.thread {
+				m.clearThread(msg.rootID)
+			}
+		}
+
+		return m, command
 	case mentionQuery:
 		return m, m.queryMention(uint64(msg))
 	case mentionResult:
@@ -468,6 +487,17 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = "Mark as read: " + msg.err.Error()
 		} else {
+			m.readRevision++
+			if msg.rootID != "" {
+				m.clearThread(msg.rootID)
+
+				if m.root == msg.rootID {
+					m.discussion.readThrough = max(m.discussion.readThrough, msg.through)
+				}
+
+				break
+			}
+
 			m.setRead(msg.channelID)
 
 			if m.active == msg.channelID {
@@ -848,6 +878,16 @@ func (m *app) setRead(id string) {
 }
 
 func (m *app) clearThread(root string) {
+	for i := range m.followed {
+		if m.followed[i].Post.ID == root {
+			m.followed[i].Unread, m.followed[i].Mentions = 0, 0
+		}
+	}
+
+	if m.active == discussionsID {
+		m.applyDiscussionFilter()
+	}
+
 	for i := range m.channels {
 		ch := &m.channels[i]
 		ch.Threads = slices.DeleteFunc(ch.Threads, func(signal threadSignal) bool { return signal.root == root })
@@ -923,6 +963,7 @@ func (m *app) openChannel() tea.Cmd {
 	}
 
 	m.active, m.root = m.channelCursor, ""
+	m.unreadNext = ""
 	m.threadChannelID, m.feedFilter, m.activityJump = "", 0, 0
 	m.timeline, m.discussion = conversation{}, conversation{}
 
@@ -938,7 +979,7 @@ func (m *app) openChannel() tea.Cmd {
 		return nil
 	}
 
-	load := m.loadHistory(false, false, true, true)
+	load := m.loadHistory(false, false, !m.preferences.ManualRead, true)
 	if !isFeed(m.active) && m.hasDraft() {
 		return tea.Batch(load, m.compose())
 	}
@@ -963,7 +1004,7 @@ func (m *app) openThread(p post, reply bool) tea.Cmd {
 	m.focus, m.fullPane = threadPane, false
 	m.status = ""
 
-	load := m.loadHistory(true, false, true, true)
+	load := m.loadHistory(true, false, !m.preferences.ManualRead, true)
 	if m.hasDraft() || reply {
 		return tea.Batch(load, m.compose())
 	}
@@ -991,6 +1032,10 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 
 	if m.updateDialog != nil {
 		return m.updateKey(key)
+	}
+
+	if m.unreadChoices != nil {
+		return m.unreadThreadsKey(key)
 	}
 
 	if m.attachmentEditing {
@@ -1095,6 +1140,9 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 		return nil
 	case "q":
 		return tea.Quit
+	case "u":
+		m.showUnreadThreads()
+		return nil
 	case "N":
 		if ch := m.notificationChannel(); !isFeed(ch.ID) {
 			m.toggleChannelNotifications(ch.ID)
@@ -1292,8 +1340,7 @@ func (m *app) key(key tea.KeyMsg) tea.Cmd {
 		return m.editInVim()
 	case "m":
 		if m.focus == threadPane {
-			view.readThrough = view.newest()
-			return m.loadHistory(true, false, true, true)
+			return m.markOpenThreadRead()
 		}
 
 		id, through := m.active, view.newest()

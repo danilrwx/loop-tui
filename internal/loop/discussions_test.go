@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -317,5 +318,122 @@ func TestUnreadShortcutFromDiscussions(t *testing.T) {
 		if m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}) == nil || m.root != "root" || m.threadChannelID != "chat" {
 			t.Fatal("n on Discussions must open an unread thread in its source channel")
 		}
+	}
+}
+
+func TestNextUnreadThreadSequenceAndReadFailure(t *testing.T) {
+	for _, scope := range []string{"chat", discussionsID} {
+		t.Run(scope, func(t *testing.T) {
+			var failRead atomic.Bool
+			failRead.Store(true)
+
+			var marks atomic.Int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/read/") {
+					if failRead.Swap(false) {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+
+					marks.Add(1)
+					w.WriteHeader(http.StatusOK)
+
+					return
+				}
+
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/thread") {
+					parts := strings.Split(r.URL.Path, "/")
+					root := parts[len(parts)-2]
+
+					channel := "chat"
+					if root == "third" {
+						channel = "other"
+					}
+
+					response := postList{Order: []string{root, "reply"}, Posts: map[string]post{
+						root:    {ID: root, ChannelID: channel, CreatedAt: 10},
+						"reply": {ID: "reply", RootID: root, ChannelID: channel, CreatedAt: 20},
+					}}
+					if err := json.NewEncoder(w).Encode(response); err != nil {
+						t.Error(err)
+					}
+
+					return
+				}
+
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer server.Close()
+
+			api := newClient(server.URL, "fixture")
+			api.me.ID = "me"
+			m := newApp(t.Context(), api)
+			m.active, m.focus = scope, channelPane
+			m.channels = []channel{
+				{ID: "chat", TeamID: "team", Threads: []threadSignal{{root: "first", team: "team", unread: 1}, {root: "second", team: "team", unread: 1}}},
+				{ID: "other", TeamID: "team", Threads: []threadSignal{{root: "third", team: "team", unread: 1}}},
+			}
+			next := func() tea.Cmd { return m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}) }
+			first := next()
+
+			request := m.discussion.request
+			if next() != nil || m.discussion.request != request {
+				t.Fatal("rapid n restarted an in-flight thread load")
+			}
+
+			m.Update(first())
+
+			if len(m.channels[0].Threads) != 2 || !strings.Contains(m.status, "Mark thread as read:") {
+				t.Fatal("failed acknowledgement dropped the first unread thread")
+			}
+
+			retry := next()
+			if retry == nil || m.root != "first" {
+				t.Fatal("failed acknowledgement was skipped")
+			}
+
+			m.Update(retry())
+
+			if len(m.channels[0].Threads) != 1 {
+				t.Fatal("successful retry did not advance the unread queue")
+			}
+
+			second := next()
+			if second == nil || m.root != "second" {
+				t.Fatal("second n did not open the second unread thread")
+			}
+
+			m.Update(second())
+			// Returning to the channel/feed keeps the remaining unread scope intact.
+			m.key(tea.KeyMsg{Type: tea.KeyEsc})
+
+			if scope == discussionsID {
+				third := next()
+				if third == nil || m.root != "third" || m.threadChannelID != "other" {
+					t.Fatal("discussions did not continue into the next channel")
+				}
+
+				m.Update(third())
+			}
+
+			if next() != nil {
+				t.Fatal("n reopened a read thread after the unread queue was exhausted")
+			}
+
+			expected := int32(2)
+			if scope == discussionsID {
+				expected = 3
+			}
+
+			if marks.Load() != expected {
+				t.Fatalf("unexpected number of acknowledged threads: %d", marks.Load())
+			}
+
+			if scope == "chat" && len(m.channels[1].Threads) != 1 {
+				t.Fatal("channel shortcut consumed a thread from another channel")
+			}
+		})
 	}
 }
