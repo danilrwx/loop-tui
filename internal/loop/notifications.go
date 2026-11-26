@@ -35,6 +35,7 @@ type notificationEvent struct {
 	team, title string
 	body        string
 	mentioned   bool
+	followed    bool
 }
 
 type notificationCursor struct {
@@ -178,12 +179,13 @@ func (wire notificationWire) notification(userID string) (notificationEvent, boo
 	}
 
 	var data struct {
-		Post     string
-		Reaction string
-		Team     string `json:"team_id"`
-		Channel  string `json:"channel_display_name"`
-		Sender   string `json:"sender_name"`
-		Mentions json.RawMessage
+		Post      string
+		Reaction  string
+		Team      string `json:"team_id"`
+		Channel   string `json:"channel_display_name"`
+		Sender    string `json:"sender_name"`
+		Mentions  json.RawMessage
+		Followers json.RawMessage
 	}
 	if json.Unmarshal(wire.Data, &data) != nil {
 		return notificationEvent{}, false
@@ -202,18 +204,8 @@ func (wire notificationWire) notification(userID string) (notificationEvent, boo
 				return notificationEvent{}, false
 			}
 
-			var mentions []string
-
-			raw := data.Mentions
-			if len(raw) > 0 && raw[0] == '"' {
-				var encoded string
-
-				_ = json.Unmarshal(raw, &encoded)
-				raw = json.RawMessage(encoded)
-			}
-
-			_ = json.Unmarshal(raw, &mentions)
-			event.mentioned = slices.Contains(mentions, userID)
+			event.mentioned = notificationRecipient(data.Mentions, userID)
+			event.followed = p.RootID != "" && notificationRecipient(data.Followers, userID)
 
 			event.body = strings.Join(strings.Fields(p.Text), " ")
 			if event.body == "" {
@@ -231,6 +223,22 @@ func (wire notificationWire) notification(userID string) (notificationEvent, boo
 	}
 
 	return event, true
+}
+
+// Mattermost encodes recipients as a JSON array inside a JSON string.
+func notificationRecipient(raw json.RawMessage, userID string) bool {
+	if len(raw) > 0 && raw[0] == '"' {
+		var encoded string
+		if json.Unmarshal(raw, &encoded) != nil {
+			return false
+		}
+
+		raw = json.RawMessage(encoded)
+	}
+
+	var users []string
+
+	return json.Unmarshal(raw, &users) == nil && slices.Contains(users, userID)
 }
 
 func (m *app) waitNotificationEvent() tea.Cmd {
@@ -262,7 +270,7 @@ func (m *app) receiveNotification(event notificationEvent, now time.Time) tea.Cm
 		m.acknowledgeReaction(event.reaction)
 	case "posted":
 		p := event.post
-		if !event.mentioned && !m.watchesChannel(p.ChannelID) || m.reminders[p.ID].post.ID != "" {
+		if !event.mentioned && !event.followed && !m.watchesChannel(p.ChannelID) || m.reminders[p.ID].post.ID != "" {
 			return nil
 		}
 
@@ -319,7 +327,7 @@ func (m *app) desktopNotice(event notificationEvent, repeat bool) tea.Cmd {
 }
 
 func (m *app) modeFor(item reminder) reminderMode {
-	if m.watchesChannel(item.post.ChannelID) {
+	if m.watchesChannel(item.post.ChannelID) || item.followed && !item.mentioned {
 		return untilRead
 	}
 
@@ -509,7 +517,7 @@ func (m *app) toggleChannelNotifications(id string) {
 		state = "off"
 
 		for postID, item := range m.reminders {
-			if item.post.ChannelID == id && !item.mentioned {
+			if item.post.ChannelID == id && !item.mentioned && !item.followed {
 				delete(m.reminders, postID)
 			}
 		}

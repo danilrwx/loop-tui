@@ -215,3 +215,72 @@ func TestNotificationSettingsPersist(t *testing.T) {
 		t.Fatalf("unexpected notification settings after restart: %+v", reopened.preferences)
 	}
 }
+
+func TestNotificationsIncludeFollowedThreadsAndServerMentionRecipients(t *testing.T) {
+	for _, scenario := range []struct {
+		name, text, root            string
+		mentions, followers         any
+		mentioned, followed, notify bool
+	}{
+		{"personal mention", "@my-username", "", `["me"]`, nil, true, false, true},
+		{"team mention", "@my-team", "", `["me"]`, nil, true, false, true},
+		{"custom mention keyword", "virtualization-oncall", "", []string{"me"}, nil, true, false, true},
+		{"followed thread", "new reply", "thread", nil, `["other","me"]`, false, true, true},
+		{"followed and mentioned", "@me new reply", "thread", `["me"]`, `["me"]`, true, true, true},
+		{"followed thread array", "new reply", "thread", nil, []string{"me"}, false, true, true},
+		{"another user's thread", "new reply", "thread", nil, `["other"]`, false, false, false},
+		{"not a reply", "new root post", "", nil, `["me"]`, false, false, false},
+		{"unrecognized text mention", "@someone-else", "", nil, nil, false, false, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			postJSON, _ := json.Marshal(post{ID: "message", UserID: "peer", ChannelID: "chat", Text: scenario.text, RootID: scenario.root, CreatedAt: 50})
+			data, _ := json.Marshal(map[string]any{"post": string(postJSON), "mentions": scenario.mentions, "followers": scenario.followers, "team_id": "team"})
+
+			event, ok := (notificationWire{Event: "posted", Data: data}).notification("me")
+			if !ok || event.mentioned != scenario.mentioned || event.followed != scenario.followed {
+				t.Fatalf("wrong notification recipients: %+v, decoded %t", event, ok)
+			}
+
+			c := newClient("https://example.org", "test")
+			c.me.ID = "me"
+			m := newApp(t.Context(), c)
+			m.notifier = "/bin/true"
+			m.preferences.MentionReminder = untilEyes
+
+			cmd := m.receiveNotification(event, time.Unix(1, 0))
+			if (cmd != nil) != scenario.notify {
+				t.Fatalf("notification scheduled=%t, want %t", cmd != nil, scenario.notify)
+			}
+
+			if scenario.followed && scenario.mentioned && m.modeFor(m.reminders["message"]) != untilEyes {
+				t.Fatal("thread subscriptions must preserve explicit mention reminder settings")
+			}
+
+			if scenario.followed && !scenario.mentioned {
+				item := m.reminders["message"]
+				if m.modeFor(item) != untilRead {
+					t.Fatal("followed thread reminders must stop when read")
+				}
+
+				m.acknowledgeRead("chat", "thread", 50)
+
+				if len(m.reminders) != 0 {
+					t.Fatal("reading the followed thread did not stop its reminder")
+				}
+			}
+		})
+	}
+}
+
+func TestDisablingChannelAlertsKeepsThreadSubscriptions(t *testing.T) {
+	c := newClient("https://example.org", "test")
+	m := newApp(t.Context(), c)
+	m.notifier = "/bin/true"
+	m.toggleChannelNotifications("chat")
+	m.receiveNotification(notificationEvent{kind: "posted", followed: true, post: post{ID: "reply", ChannelID: "chat", RootID: "thread", CreatedAt: 1}}, time.Now())
+	m.toggleChannelNotifications("chat")
+
+	if _, ok := m.reminders["reply"]; !ok {
+		t.Fatal("channel-wide alerts must not disable notifications for followed threads")
+	}
+}
