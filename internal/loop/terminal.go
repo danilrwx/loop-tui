@@ -84,7 +84,7 @@ func runClient(ctx context.Context, api *client, demo bool, version string) erro
 		}
 	}
 
-	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
+	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithReportFocus(), tea.WithContext(ctx)}
 
 	model.inlineImages = tui.NewImageOutput(os.Stdout)
 	defer model.inlineImages.Clear()

@@ -200,7 +200,12 @@ func runInlineVisualHelper(t *testing.T) {
 
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 32; x++ {
-			src.SetRGBA(x, y, color.RGBA{R: 255, A: 255})
+			c := color.RGBA{R: 255, A: 255}
+			if os.Getenv("LOOP_INLINE_VISUAL_NOISE") == "1" && x >= 4 && x < 28 && y >= 4 && y < 28 {
+				c = color.RGBA{R: uint8((x*71 + y*97) % 256), G: uint8((x*43 + y*53) % 256), B: uint8((x*11 + y*29) % 256), A: 255}
+			}
+
+			src.SetRGBA(x, y, c)
 		}
 	}
 
@@ -249,7 +254,7 @@ func runInlineVisualHelper(t *testing.T) {
 	defer m.inlineImages.Clear()
 
 	model := &inlineVisualModel{app: m, enable: os.Getenv("LOOP_INLINE_ENABLE_FILE")}
-	if _, err := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(&terminalOutput{InlineImages: m.inlineImages}), tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(&terminalOutput{InlineImages: m.inlineImages}), tea.WithAltScreen(), tea.WithReportFocus()).Run(); err != nil {
 		t.Fatal(err)
 	}
 }

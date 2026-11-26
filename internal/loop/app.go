@@ -325,6 +325,9 @@ func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.FocusMsg:
+		// Re-measuring forces a repaint without clearing the window first.
+		return m, tea.WindowSize()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.draft.SetWidth(max(8, m.conversationWidth()))

@@ -1,8 +1,11 @@
 package loop
 
 import (
+	"fmt"
 	"os"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/danilrwx/telega/tui"
 )
@@ -39,5 +42,16 @@ func TestTerminalOutputSynchronizesOnlyFrames(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestFocusRestoresTerminalImages(t *testing.T) {
+	m := newApp(t.Context(), newDemoClient())
+
+	_, cmd := m.update(tea.FocusMsg{})
+
+	expected := tea.WindowSize()
+	if cmd == nil || fmt.Sprintf("%T", cmd()) != fmt.Sprintf("%T", expected()) {
+		t.Fatal("focus did not force a complete redraw")
 	}
 }

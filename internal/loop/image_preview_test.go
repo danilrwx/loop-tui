@@ -100,7 +100,7 @@ func TestImagePreviewRecoversAfterTmuxCapabilitiesChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(state, []byte("linux|off|1|bpaste"), 0o600); err != nil {
+	if err := os.WriteFile(state, []byte("linux|off|1|bpaste|1"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +110,7 @@ func TestImagePreviewRecoversAfterTmuxCapabilitiesChange(t *testing.T) {
 		t.Fatal("initial terminal unexpectedly supports graphics")
 	}
 
-	if err := os.WriteFile(state, []byte("foot|on|1|RGB,sixel"), 0o600); err != nil {
+	if err := os.WriteFile(state, []byte("foot|on|1|RGB,sixel|1"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
