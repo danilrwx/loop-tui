@@ -49,11 +49,17 @@ type reminder struct {
 	summary int
 }
 
+type reminderView struct {
+	LastViewed int64 `json:"last_viewed_at"`
+	Following  *bool `json:"is_following"`
+}
+
 type reminderCheck struct {
-	id   string
-	mode reminderMode
-	done bool
-	err  error
+	id             string
+	mode           reminderMode
+	stopOnUnfollow bool
+	done           bool
+	err            error
 }
 
 type (
@@ -385,7 +391,7 @@ func (m *daemon) checkReminders(now time.Time) command {
 	for _, item := range m.reminders {
 		if !now.Before(item.due) {
 			due = append(due, item)
-			checks = append(checks, reminderCheck{id: item.post.ID, mode: m.modeFor(item)})
+			checks = append(checks, reminderCheck{id: item.post.ID, mode: m.modeFor(item), stopOnUnfollow: item.followed && !item.mentioned && !m.watchesChannel(item.post.ChannelID)})
 		}
 	}
 
@@ -402,8 +408,8 @@ func (m *daemon) checkReminders(now time.Time) command {
 		type readScope struct{ channel, root string }
 
 		type viewState struct {
-			lastViewed int64
-			err        error
+			view reminderView
+			err  error
 		}
 
 		viewed := make(map[readScope]viewState)
@@ -429,18 +435,20 @@ func (m *daemon) checkReminders(now time.Time) command {
 
 			state, ok := viewed[scope]
 			if !ok {
-				state.lastViewed, state.err = m.api.reminderViewed(ctx, item)
+				state.view, state.err = m.api.reminderViewed(ctx, item)
 				viewed[scope] = state
 			}
 
-			check.done, check.err = state.lastViewed >= item.post.CreatedAt, state.err
+			unfollowed := state.view.Following != nil && !*state.view.Following
+			check.done = state.view.LastViewed >= item.post.CreatedAt || unfollowed && check.stopOnUnfollow
+			check.err = state.err
 		}
 
 		return checks
 	}
 }
 
-func (c *client) reminderViewed(ctx context.Context, item reminder) (int64, error) {
+func (c *client) reminderViewed(ctx context.Context, item reminder) (reminderView, error) {
 	p := item.post
 	user := url.PathEscape(c.me.ID)
 
@@ -449,23 +457,21 @@ func (c *client) reminderViewed(ctx context.Context, item reminder) (int64, erro
 		path = "/users/" + user + "/teams/" + url.PathEscape(item.team) + "/threads/" + url.PathEscape(p.RootID)
 	}
 
-	var state struct {
-		LastViewed int64 `json:"last_viewed_at"`
-	}
+	var state reminderView
 
 	err := c.request(ctx, http.MethodGet, path, nil, &state)
 	if errors.Is(err, errNotFound) && p.RootID != "" {
 		var existing post
 		if postErr := c.request(ctx, http.MethodGet, "/posts/"+url.PathEscape(p.ID), nil, &existing); errors.Is(postErr, errNotFound) {
-			return p.CreatedAt, nil
+			return reminderView{LastViewed: p.CreatedAt}, nil
 		} else if postErr != nil {
-			return 0, postErr
+			return reminderView{}, postErr
 		}
 
-		return 0, nil // An unfollowed thread can have no server read state.
+		return reminderView{Following: new(false)}, nil // Unfollowing can remove the server read state.
 	}
 
-	return state.LastViewed, err
+	return state, err
 }
 
 func (c *client) reminderReacted(ctx context.Context, id string, mode reminderMode) (bool, error) {

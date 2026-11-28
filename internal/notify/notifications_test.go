@@ -274,6 +274,79 @@ func TestDisablingChannelAlertsKeepsThreadSubscriptions(t *testing.T) {
 	}
 }
 
+func TestThreadRemindersRespectReadAndFollowState(t *testing.T) {
+	for _, scenario := range []struct {
+		name, state string
+		status      int
+		mentioned   bool
+		watched     bool
+		deleted     bool
+		keep        bool
+	}{
+		{name: "unread followed thread", state: `{"last_viewed_at":0,"is_following":true}`, keep: true},
+		{name: "read followed thread", state: `{"last_viewed_at":50,"is_following":true}`},
+		{name: "unfollowed thread", state: `{"last_viewed_at":0,"is_following":false}`},
+		{name: "missing unfollowed thread", status: http.StatusNotFound},
+		{name: "missing mentioned thread", status: http.StatusNotFound, mentioned: true, keep: true},
+		{name: "unfollowed mentioned thread", state: `{"last_viewed_at":0,"is_following":false}`, mentioned: true, keep: true},
+		{name: "unfollowed watched channel", state: `{"last_viewed_at":0,"is_following":false}`, watched: true, keep: true},
+		{name: "deleted reply", status: http.StatusNotFound, deleted: true},
+		{name: "server failure", status: http.StatusInternalServerError, keep: true},
+		{name: "omitted follow state", state: `{"last_viewed_at":0}`, keep: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v4/users/me/teams/team/threads/thread":
+					if scenario.status != 0 {
+						w.WriteHeader(scenario.status)
+						return
+					}
+
+					_, _ = fmt.Fprint(w, scenario.state)
+				case "/api/v4/posts/reply":
+					if scenario.deleted {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+
+					_, _ = fmt.Fprint(w, `{"id":"reply"}`)
+				default:
+					t.Errorf("unexpected endpoint: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			c := newClient(server.URL, "test")
+			c.me.ID = "me"
+			m := newDaemon(t.Context(), c)
+
+			m.notifier = "/bin/true"
+			if scenario.watched {
+				m.toggleChannelNotifications("chat")
+			}
+
+			now := time.Now()
+			m.receiveNotification(notificationEvent{
+				kind: "posted", followed: true, mentioned: scenario.mentioned, team: "team",
+				post: post{ID: "reply", ChannelID: "chat", RootID: "thread", CreatedAt: 50},
+			}, now)
+			at := now.Add(reminderInterval)
+			checks := m.checkReminders(at)().(remindersChecked)
+
+			repeat := m.receiveReminderChecks(checks, at)
+			if _, kept := m.reminders["reply"]; kept != scenario.keep {
+				t.Fatalf("reminder retained: %v, want %v", kept, scenario.keep)
+			}
+
+			if repeat != nil && (!scenario.keep || scenario.status == http.StatusInternalServerError) {
+				t.Fatal("unexpected repeat notification")
+			}
+		})
+	}
+}
+
 func (m *daemon) toggleChannelNotifications(id string) {
 	if m.preferences.WatchedChannels == nil {
 		m.preferences.WatchedChannels = make(map[string]map[string]bool)
